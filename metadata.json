@@ -1,0 +1,7 @@
+{
+  "name": "StrudelSpeak",
+  "description": "AI-augmented live coding environment for the Strudel music engine featuring self-healing code generation.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
