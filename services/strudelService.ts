@@ -1,17 +1,11 @@
-import * as StrudelLib from '@strudel/core';
+// Import Strudel packages
+import * as StrudelCore from '@strudel/core';
+import * as StrudelWebAudio from '@strudel/webaudio';
+import { transpiler } from '@strudel/transpiler';
 import { StrudelError } from '../types';
 
-// Robust export unwrapping
-let Strudel: any = StrudelLib;
-
-// Unwrap default if it exists (ESM/CJS interop)
-if (Strudel.default) {
-    Strudel = { ...Strudel, ...Strudel.default };
-}
-// Double unwrap in case of nested default (bundler artifacts)
-if (Strudel.default && Strudel.default.default) {
-    Strudel = { ...Strudel, ...Strudel.default.default };
-}
+// Combine core and webaudio
+const Strudel = { ...StrudelCore, ...StrudelWebAudio };
 
 // Expose Strudel functions to global scope so eval() works with generated code
 if (typeof window !== 'undefined') {
@@ -41,49 +35,30 @@ class StrudelService {
 
   constructor() {
     console.log('Strudel Engine Initializing...');
-    
-    // LOCATE SCHEDULER
-    if (Strudel.scheduler) {
-        this.scheduler = Strudel.scheduler;
-        console.log('Using exported Strudel.scheduler');
-    } 
-    else if (Strudel.Scheduler) {
-        try {
-            console.log('Instantiating new Strudel.Scheduler()');
-            // Try to instantiate with default audio context logic if possible
-            // Most Strudel schedulers create their own context if none provided
-            this.scheduler = new Strudel.Scheduler();
-            
-            // If the scheduler needs manual start/audio context init, we'll handle in play()
-            
-            // Polyfill the global scheduler if missing, as some eval code might rely on it implicitly
-            // @ts-ignore
-            if (typeof window !== 'undefined' && !window.scheduler) {
-                // @ts-ignore
-                window.scheduler = this.scheduler;
-            }
-            
-        } catch (e) {
-            console.error('Failed to instantiate Strudel Scheduler:', e);
-        }
-    } else {
-        console.error('CRITICAL: Could not find Strudel.scheduler or Strudel.Scheduler class.');
-        console.log('Available Strudel exports keys:', Object.keys(Strudel));
-        // Last ditch effort: maybe Strudel itself IS the scheduler interface in some weird bundle?
-        if (typeof Strudel.start === 'function' && typeof Strudel.setPattern === 'function') {
-             console.log('Strudel object itself looks like a scheduler.');
-             this.scheduler = Strudel;
-        }
+
+    // Initialize audio context
+    if (typeof Strudel.initAudio === 'function') {
+      Strudel.initAudio();
+      console.log('Audio context initialized');
     }
 
-    // Initialize default samples path if function exists
-    if (typeof Strudel.samples === 'function') {
-       try {
-         Strudel.samples('github:tidalcycles/Dirt-Samples');
-       } catch (e) {
-         console.warn('Failed to load default samples:', e);
-       }
+    // Initialize WebAudio and get scheduler
+    try {
+      if (Strudel.webaudioRepl) {
+          this.scheduler = Strudel.webaudioRepl();
+          console.log('Using Strudel webaudioRepl as scheduler');
+      } else if (Strudel.superdough) {
+          this.scheduler = Strudel.superdough();
+          console.log('Using Strudel superdough as scheduler');
+      } else {
+          console.error('CRITICAL: Could not find Strudel scheduler (webaudioRepl or superdough).');
+          console.log('Available Strudel exports keys:', Object.keys(Strudel));
+      }
+    } catch (e) {
+      console.error('Failed to initialize Strudel scheduler:', e);
     }
+
+    // Initialize default samples path if function exists - moved to initAudio
   }
 
   private async initAudio() {
@@ -101,6 +76,16 @@ class StrudelService {
          // If scheduler doesn't have context exposed, it might be internal.
          // We trust .start() to handle it.
         console.log('Audio Context not directly accessible, relying on scheduler.start()');
+      }
+
+      // Initialize default samples path if function exists
+      if (typeof Strudel.samples === 'function') {
+         try {
+           await Strudel.samples('https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/strudel.json');
+           console.log('Default samples loaded');
+         } catch (e) {
+           console.warn('Failed to load default samples:', e);
+         }
       }
     } catch (e) {
       console.error('Failed to initialize audio context:', e);
@@ -125,21 +110,24 @@ class StrudelService {
   }
 
   /**
-   * Validates pattern by attempting to eval it
+   * Validates pattern using Strudel transpiler
    */
   public validatePattern(code: string): { isValid: boolean; error?: StrudelError } {
     try {
-      // Use evaluate if available as it handles Strudel-specific syntax better
-      const evalFunc = Strudel.evaluate;
-      
-      if (typeof evalFunc === 'function') {
-        evalFunc(code);
-      } else {
-        // Fallback to basic eval in global scope (where we injected Strudel)
-        // @ts-ignore
-        const result = window.eval(code);
-        if (!result) throw new Error("No pattern returned");
+      // Use transpiler for proper Strudel syntax validation
+      const transpiledResult = transpiler(code);
+      const transpiledCode = transpiledResult.output;
+
+      // Remove the 'return ' prefix if present
+      let evalCode = transpiledCode;
+      if (evalCode.startsWith('return ')) {
+        evalCode = evalCode.substring(7);
       }
+
+      // Evaluate the transpiled code in a function context
+      // @ts-ignore
+      const result = window.eval(`(function() { return ${evalCode} })()`);
+      if (!result) throw new Error("No pattern returned");
 
       return { isValid: true };
     } catch (e: any) {
@@ -147,7 +135,8 @@ class StrudelService {
         isValid: false,
         error: {
           message: e.message || 'Syntax Error',
-          line: 1
+          line: e.line || 1,
+          column: e.column
         }
       };
     }
@@ -177,24 +166,40 @@ class StrudelService {
 
   public setPattern(code: string) {
     this.currentCode = code;
-    // console.log(`Strudel: Pattern Updated`);
+    console.log(`Strudel: Setting pattern: ${code}`);
 
     try {
-        let pattern;
         const evalFunc = Strudel.evaluate;
 
-        if (typeof evalFunc === 'function') {
-            pattern = evalFunc(code);
-        } else {
-            // @ts-ignore
-            pattern = window.eval(code);
+        // Transpile the code first
+        console.log('Transpiling code...');
+        const transpiledResult = transpiler(code);
+        let transpiledCode = transpiledResult.output;
+        console.log('Transpiled code:', transpiledCode);
+
+        // Remove the 'return ' prefix and trailing ';' if present
+        if (transpiledCode.startsWith('return ')) {
+          transpiledCode = transpiledCode.substring(7);
         }
-        
-        if (this.scheduler) {
-            this.scheduler.setPattern(pattern);
+        if (transpiledCode.endsWith(';')) {
+          transpiledCode = transpiledCode.slice(0, -1);
+        }
+
+        // Evaluate the transpiled code
+        console.log('Evaluating transpiled code...');
+        // @ts-ignore
+        const pattern = window.eval(`(function() { return ${transpiledCode} })()`);
+        console.log('Pattern evaluated:', pattern);
+        if (this.scheduler && pattern) {
+          console.log('Setting pattern on scheduler...');
+          this.scheduler.setPattern(pattern);
+          console.log('Pattern set successfully');
+        } else {
+          console.error('Scheduler or pattern missing:', { scheduler: !!this.scheduler, pattern: !!pattern });
         }
     } catch (e) {
         console.error("Failed to set pattern:", e);
+        console.error("Error details:", { message: e.message, stack: e.stack });
     }
   }
 

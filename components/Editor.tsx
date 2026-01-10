@@ -1,3 +1,5 @@
+'use client'
+
 import React from 'react';
 import { Download } from 'lucide-react';
 import { vscodeService } from '../services/vscodeService';
@@ -8,7 +10,7 @@ interface EditorProps {
   readOnly?: boolean;
 }
 
-export const Editor: React.FC<EditorProps> = ({ code, onChange, readOnly }) => {
+export const StrudelEditor: React.FC<EditorProps> = ({ code, onChange, readOnly }) => {
   const isVSCode = vscodeService.getIsConnected();
 
   const handleInsert = () => {
@@ -16,14 +18,14 @@ export const Editor: React.FC<EditorProps> = ({ code, onChange, readOnly }) => {
   };
 
   return (
-    <div className="w-full h-full bg-[#1e1e1e] rounded-lg overflow-hidden border border-gray-700 shadow-inner flex flex-col">
-      <div className="bg-[#252526] px-4 py-2 text-xs text-gray-400 border-b border-gray-700 font-mono flex justify-between items-center">
+    <div className="w-full h-full bg-gray-800 rounded-lg overflow-hidden border border-gray-700 shadow-inner flex flex-col">
+      <div className="bg-gray-900 px-4 py-2 text-xs text-gray-400 border-b border-gray-700 font-mono flex justify-between items-center">
         <div className="flex gap-4">
             <span>main.strudel</span>
             <span className="text-purple-400">STRUDEL</span>
         </div>
         {isVSCode && (
-            <button 
+            <button
                 onClick={handleInsert}
                 className="flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
                 title="Insert code into VS Code active editor"
@@ -34,7 +36,7 @@ export const Editor: React.FC<EditorProps> = ({ code, onChange, readOnly }) => {
         )}
       </div>
       <textarea
-        className="flex-1 w-full h-full bg-[#1e1e1e] text-blue-300 font-mono text-sm p-4 resize-none focus:outline-none leading-relaxed"
+        className="flex-1 w-full h-full bg-gray-800 text-green-300 font-mono text-sm p-4 resize-none focus:outline-none leading-relaxed"
         value={code}
         onChange={(e) => onChange(e.target.value)}
         spellCheck={false}

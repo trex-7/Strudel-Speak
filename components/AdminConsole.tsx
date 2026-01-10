@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, CheckCircle, XCircle, Terminal, RefreshCw } from 'lucide-react';
-import { geminiService } from '../services/geminiService';
+import { openRouterService } from '../services/openRouterService';
 import { InteractionLog } from '../types';
 
 interface AdminConsoleProps {
@@ -15,7 +15,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({ onClose }) => {
   }, []);
 
   const refreshLogs = () => {
-    setLogs([...geminiService.getLogs()]);
+    setLogs([...openRouterService.getLogs()]);
   };
 
   return (
@@ -53,6 +53,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({ onClose }) => {
                     <span className="text-gray-300 font-bold">{log.userPrompt}</span>
                  </div>
                  <div className="text-xs text-gray-500">
+                    {log.model && <span className="text-blue-400 mr-2">[{log.model}]</span>}
                     {new Date(log.timestamp).toLocaleTimeString()} • Chaos: {log.chaosLevel}
                  </div>
               </div>

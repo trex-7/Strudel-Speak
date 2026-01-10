@@ -1,39 +1,40 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Send, Music, Zap, Terminal, Key, Database, MessageSquare, Monitor, LayoutTemplate } from 'lucide-react';
 import { strudelService } from './services/strudelService';
-import { geminiService } from './services/geminiService';
+import { openRouterService } from './services/openRouterService';
 import { vscodeService } from './services/vscodeService';
 import { jamBuddyService } from './services/jamBuddyService';
-import { Editor } from './components/Editor';
+import { sampleService } from './services/sampleService';
+import { StrudelEditor } from './components/Editor';
 import { Visualizer } from './components/Visualizer';
 import { Controls } from './components/Controls';
 import { SampleManager } from './components/SampleManager';
 import { AdminConsole } from './components/AdminConsole';
 import { ChatMessage, AppMode, StrudelPattern, JamMode } from './types';
+import { useAppStore } from './store/appStore';
 import { INITIAL_PATTERN } from './constants';
 
 const App: React.FC = () => {
-  // State
-  const [mode, setMode] = useState<AppMode>(AppMode.ADVANCED);
-  const [sidebarTab, setSidebarTab] = useState<'chat' | 'samples'>('chat');
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [code, setCode] = useState(INITIAL_PATTERN);
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: 'system', content: 'StrudelSpeak initialized. Ready for prompt.' }
-  ]);
-  const [input, setInput] = useState('');
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [visualHint, setVisualHint] = useState('#4ade80');
-  const [chaos, setChaos] = useState(0);
-  const [density, setDensity] = useState(0.5);
-  const [apiKey, setApiKey] = useState('');
-  const [showKeyModal, setShowKeyModal] = useState(false);
-  const [showAdmin, setShowAdmin] = useState(false);
-  const [isVSCode, setIsVSCode] = useState(false);
-  
-  // Jam Buddy State
-  const [jamMode, setJamMode] = useState<JamMode>(JamMode.OFF);
-  const [isJamming, setIsJamming] = useState(false);
+  // Zustand store
+  const {
+    mode, setMode,
+    sidebarTab, setSidebarTab,
+    isPlaying, setIsPlaying,
+    code, setCode,
+    messages, addMessage,
+    input, setInput,
+    isGenerating, setIsGenerating,
+    visualHint, setVisualHint,
+    chaos, setChaos,
+    density, setDensity,
+    apiKey, setApiKey,
+    selectedModel, setSelectedModel,
+    showKeyModal, setShowKeyModal,
+    showAdmin, setShowAdmin,
+    isVSCode, setIsVSCode,
+    jamMode, setJamMode,
+    isJamming, setIsJamming
+  } = useAppStore();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -47,12 +48,18 @@ const App: React.FC = () => {
     }
 
     // Check for API Key
-    if (!geminiService.hasKey()) {
-      setShowKeyModal(true);
+    if (!openRouterService.hasKey()) {
+      // Try to load from environment variable
+      const envKey = (import.meta as any).env?.VITE_OPENROUTER_API_KEY;
+      if (envKey) {
+        openRouterService.updateKey(envKey);
+      } else {
+        setShowKeyModal(true);
+      }
     }
-    // Set initial pattern
-    strudelService.setPattern(code);
 
+    // Set initial pattern
+    // strudelService.setPattern(code);
     // VS Code: restore state if available
     const savedState = vscodeService.getState();
     if (savedState) {
@@ -61,21 +68,26 @@ const App: React.FC = () => {
             strudelService.setPattern(savedState.code);
         }
     }
-    
+
     // Init Jam Buddy Callback
     jamBuddyService.setCallback((result) => {
         setCode(result.code);
         if(result.visualHint) setVisualHint(result.visualHint);
-        
+
         // Add a small notification message to chat without disrupting too much
-        setMessages(prev => [...prev, { 
-            role: 'assistant', 
+        addMessage({
+            role: 'assistant',
             content: `[Jam Buddy] ${result.explanation}`,
             metadata: { code: result.code }
-        }]);
+        });
     });
 
-  }, []);
+  }, [code, addMessage, setCode, setIsVSCode, setMode, setShowKeyModal, setVisualHint]);
+
+  // Sync model with Jam Buddy
+  useEffect(() => {
+      jamBuddyService.setModel(selectedModel);
+  }, [selectedModel]);
 
   // Save state to VS Code when code changes
   useEffect(() => {
@@ -106,7 +118,7 @@ const App: React.FC = () => {
 
   const handleApiKeySubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    geminiService.updateKey(apiKey);
+    openRouterService.updateKey(apiKey);
     setShowKeyModal(false);
   };
 
@@ -116,33 +128,34 @@ const App: React.FC = () => {
 
     const userMsg = input;
     setInput('');
-    setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+    addMessage({ role: 'user', content: userMsg });
     setIsGenerating(true);
 
     try {
-      const result: StrudelPattern = await geminiService.generatePattern(
+      const result: StrudelPattern = await openRouterService.generatePattern(
         userMsg,
         code,
-        chaos
+        chaos,
+        selectedModel
       );
 
       // Success
-      setMessages(prev => [...prev, { 
-        role: 'assistant', 
+      addMessage({
+        role: 'assistant',
         content: result.explanation,
         metadata: { code: result.code }
-      }]);
+      });
       
       setCode(result.code);
       strudelService.setPattern(result.code);
       if (result.visualHint) setVisualHint(result.visualHint);
 
     } catch (err: any) {
-      setMessages(prev => [...prev, { 
-        role: 'system', 
-        content: `Error: ${err.message}`, 
-        type: 'error' 
-      }]);
+      addMessage({
+        role: 'system',
+        content: `Error: ${err.message}`,
+        type: 'error'
+      });
     } finally {
       setIsGenerating(false);
     }
@@ -156,7 +169,7 @@ const App: React.FC = () => {
   
   const handleSurprise = async () => {
       setIsJamming(true);
-      await jamBuddyService.triggerSurprise(chaos || 0.3);
+      await jamBuddyService.triggerSurprise(chaos || 0.3, selectedModel);
       setIsJamming(false);
   };
 
@@ -178,8 +191,20 @@ const App: React.FC = () => {
                     </div>
                     <span className="font-bold text-sm tracking-tight">Strudel<span className="text-purple-400">Speak</span></span>
                 </div>
-                <div className="text-[10px] bg-blue-900/30 text-blue-300 px-2 py-0.5 rounded border border-blue-900/50">
-                    VS CODE EXTENSION
+                <div className="flex items-center gap-2">
+                    <div className="text-[10px] bg-blue-900/30 text-blue-300 px-2 py-0.5 rounded border border-blue-900/50">
+                        VS CODE EXTENSION
+                    </div>
+                    <select 
+                        value={selectedModel}
+                        onChange={(e) => setSelectedModel(e.target.value)}
+                        className="bg-[#18181b] text-[10px] text-gray-300 rounded px-1 py-0.5 border border-gray-700 focus:outline-none focus:border-blue-500"
+                    >
+                        <option value="anthropic/claude-3.5-sonnet">Claude 3.5</option>
+                        <option value="google/gemini-2.0-flash-001">Gemini 2.0</option>
+                        <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
+                        <option value="deepseek/deepseek-chat">DeepSeek</option>
+                    </select>
                 </div>
             </div>
 
@@ -412,7 +437,7 @@ const App: React.FC = () => {
           {/* Editor Area */}
           <div className={`transition-all duration-300 ease-in-out ${mode === AppMode.ADVANCED ? 'h-1/2 opacity-100' : 'h-0 opacity-0 overflow-hidden'} border-t border-gray-800`}>
              <div className="h-full p-4">
-               <Editor code={code} onChange={handleCodeChange} />
+               <StrudelEditor code={code} onChange={handleCodeChange} />
              </div>
           </div>
 
@@ -445,6 +470,8 @@ const App: React.FC = () => {
         onJamModeChange={handleJamModeChange}
         onSurprise={handleSurprise}
         isJamming={isJamming}
+        selectedModel={selectedModel}
+        onModelChange={setSelectedModel}
       />
 
       {/* API Key Modal */}
@@ -456,7 +483,7 @@ const App: React.FC = () => {
               API Key Required
             </h2>
             <p className="text-gray-400 text-sm mb-6 leading-relaxed">
-              To use the AI composition features, please enter your Gemini API Key.
+              To use the AI composition features, please enter your OpenRouter API Key.
               This key is stored locally in your browser.
             </p>
             <form onSubmit={handleApiKeySubmit}>
@@ -464,14 +491,14 @@ const App: React.FC = () => {
                 type="password"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                placeholder="Paste Gemini API Key here..."
+                placeholder="Paste OpenRouter API Key here..."
                 className="w-full bg-[#0f0f0f] border border-gray-700 rounded p-3 text-sm mb-4 focus:border-purple-500 focus:outline-none"
                 autoFocus
               />
               <div className="flex gap-3 justify-end">
-                <a 
-                  href="https://aistudio.google.com/app/apikey" 
-                  target="_blank" 
+                <a
+                  href="https://openrouter.ai/keys"
+                  target="_blank"
                   rel="noreferrer"
                   className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors"
                 >

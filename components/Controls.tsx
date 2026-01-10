@@ -1,6 +1,7 @@
 import React from 'react';
-import { Play, Square, RefreshCw, Settings2, Sparkles, Zap } from 'lucide-react';
+import { Play, Square, RefreshCw, Settings2, Sparkles, Zap, Cpu } from 'lucide-react';
 import { JamMode } from '../types';
+import { AVAILABLE_MODELS } from '../constants';
 
 interface ControlsProps {
   isPlaying: boolean;
@@ -16,6 +17,9 @@ interface ControlsProps {
   onJamModeChange: (mode: JamMode) => void;
   onSurprise: () => void;
   isJamming: boolean;
+  // Model Selection
+  selectedModel: string;
+  onModelChange: (model: string) => void;
 }
 
 export const Controls: React.FC<ControlsProps> = ({
@@ -30,7 +34,9 @@ export const Controls: React.FC<ControlsProps> = ({
   jamMode,
   onJamModeChange,
   onSurprise,
-  isJamming
+  isJamming,
+  selectedModel,
+  onModelChange
 }) => {
   return (
     <div className="h-20 bg-[#18181b] border-t border-gray-800 flex items-center px-4 md:px-6 gap-4 md:gap-8 z-10 select-none overflow-x-auto overflow-y-hidden no-scrollbar">
@@ -123,6 +129,26 @@ export const Controls: React.FC<ControlsProps> = ({
                 <Zap size={12} className={isJamming ? 'animate-spin' : ''} />
                 <span className="hidden sm:inline">SURPRISE ME</span>
             </button>
+        </div>
+
+        {/* Model Selection */}
+        <div className="flex items-center gap-2 px-2 py-1.5 md:px-3 md:py-2 bg-[#0f0f0f] rounded-lg border border-gray-800 flex-shrink-0">
+            <div className="flex flex-col mr-1 md:mr-2">
+                <span className="text-[10px] text-blue-400 font-bold uppercase tracking-wider flex items-center gap-1">
+                    <Cpu size={10} /> <span className="hidden sm:inline">AI Model</span>
+                </span>
+                <span className="text-[10px] text-gray-500 hidden sm:inline">OpenRouter</span>
+            </div>
+            
+            <select 
+                value={selectedModel}
+                onChange={(e) => onModelChange(e.target.value)}
+                className="bg-[#27272a] text-xs text-gray-200 rounded px-1 py-1 md:px-2 border border-gray-700 focus:outline-none focus:border-blue-500 w-24 md:w-auto"
+            >
+                {AVAILABLE_MODELS.map(m => (
+                    <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+            </select>
         </div>
       </div>
 

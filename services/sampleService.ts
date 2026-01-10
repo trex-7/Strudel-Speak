@@ -5,7 +5,7 @@ import Dexie, { Table } from 'dexie';
 // --- Database Schema ---
 interface SampleRecord {
   id?: number;
-  name: string; // "bd/001"
+  name: string; // "bd:001"
   bank: string; // "bd"
   data: Blob;
 }
@@ -29,6 +29,7 @@ class SampleService {
   private samples: Map<string, Sample> = new Map();
   private isSupported: boolean;
   private banksCache: SampleBank[] = [];
+  private sampleMap: Record<string, string> = {};
 
   constructor() {
     this.isSupported = 'showDirectoryPicker' in window;
@@ -47,10 +48,11 @@ class SampleService {
       
       for (const record of records) {
         const url = URL.createObjectURL(record.data);
-        strudelService.registerSample(record.name, url);
-        
-        this.samples.set(record.name, {
-          name: record.name,
+        const correctedName = record.name.replace(/\//g, ":");
+        strudelService.registerSample(correctedName, url);
+
+        this.samples.set(correctedName, {
+          name: correctedName,
           path: url,
           source: 'offline',
           bank: record.bank
@@ -110,7 +112,7 @@ class SampleService {
       const baseName = name.replace(/\.[^/.]+$/, "");
       let registryName = baseName;
       if (pathPrefix) {
-        registryName = `${pathPrefix}/${baseName}`;
+        registryName = `${pathPrefix}:${baseName}`;
       }
 
       strudelService.registerSample(registryName, url);
@@ -126,34 +128,57 @@ class SampleService {
   // --- GitHub / Cloud Samples (Phase 2 Part B) ---
 
   /**
-   * Fetches list of sample banks (folders) from tidalcycles/Dirt-Samples
-   */
+    * Fetches list of sample banks from GitHub API for geikha/tidal-drum-machines
+    */
   public async fetchGithubBanks(): Promise<SampleBank[]> {
     if (this.banksCache.length > 0) return this.banksCache;
 
     try {
-      // Use GitHub API to list folders in the repo
-      const response = await fetch('https://api.github.com/repos/tidalcycles/Dirt-Samples/contents/');
-      if (!response.ok) throw new Error('GitHub API limit or network error');
-      
-      const items = await response.json();
-      
+      // Fetch the tree from GitHub API
+      const response = await fetch('https://api.github.com/repos/geikha/tidal-drum-machines/git/trees/main?recursive=1');
+      if (!response.ok) throw new Error('Failed to fetch repository tree');
+
+      const data = await response.json();
+      const tree = data.tree;
+
+      // Build sample map
+      const newSampleMap: Record<string, string> = {};
+      const bankCounts: Record<string, number> = {};
+
+      for (const item of tree) {
+        if (item.type === 'blob' && item.path.startsWith('machines/') && (item.path.endsWith('.wav') || item.path.endsWith('.mp3'))) {
+          // Path format: machines/MachineName/BankName/FileName.wav
+          const parts = item.path.split('/');
+          if (parts.length >= 3) {
+            const bankName = parts[parts.length - 2];
+            const index = bankCounts[bankName] || 0;
+            const sampleName = `${bankName}:${index}`;
+            const rawUrl = `https://raw.githubusercontent.com/geikha/tidal-drum-machines/main/${item.path}`;
+            
+            newSampleMap[sampleName] = rawUrl;
+            bankCounts[bankName] = index + 1;
+          }
+        }
+      }
+
+      this.sampleMap = newSampleMap;
+
       // Get list of banks currently in DB to mark 'isOffline'
       const offlineBanks = await this.getOfflineBanks();
 
-      const banks: SampleBank[] = items
-        .filter((item: any) => item.type === 'dir' && !item.name.startsWith('.'))
-        .map((item: any) => ({
-          name: item.name,
-          url: item.url, // API url to get contents
-          sampleCount: 0, // We don't know yet without extra reqs
-          isOffline: offlineBanks.has(item.name)
-        }));
+      const banks: SampleBank[] = Object.keys(bankCounts)
+        .map(bank => ({
+          name: bank,
+          url: '', 
+          sampleCount: bankCounts[bank],
+          isOffline: offlineBanks.has(bank)
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
 
       this.banksCache = banks;
       return banks;
     } catch (e) {
-      console.error('[SampleService] GitHub Fetch Error:', e);
+      console.error('[SampleService] Fetch Error:', e);
       throw e;
     }
   }
@@ -163,53 +188,43 @@ class SampleService {
    */
   public async downloadBank(bank: SampleBank, onProgress?: (percent: number) => void): Promise<void> {
     try {
-        // 1. Get file list
-        const response = await fetch(bank.url);
-        const files = await response.json();
-        
-        const audioFiles = files.filter((f: any) => 
-            f.name.endsWith('.wav') || f.name.endsWith('.mp3') || f.name.endsWith('.ogg')
-        );
+        // Get samples for this bank
+        const bankSamples = Object.keys(this.sampleMap).filter(name => name.startsWith(`${bank.name}:`));
 
-        if (audioFiles.length === 0) throw new Error('No audio files found in bank');
+        if (bankSamples.length === 0) throw new Error('No samples found in bank');
 
         let completed = 0;
 
         // 2. Process in chunks to avoid rate limiting
         const CHUNK_SIZE = 5;
-        for (let i = 0; i < audioFiles.length; i += CHUNK_SIZE) {
-            const chunk = audioFiles.slice(i, i + CHUNK_SIZE);
-            await Promise.all(chunk.map(async (file: any) => {
-                // Fetch raw content
-                const rawUrl = file.download_url;
-                const blobResp = await fetch(rawUrl);
+        for (let i = 0; i < bankSamples.length; i += CHUNK_SIZE) {
+            const chunk = bankSamples.slice(i, i + CHUNK_SIZE);
+            await Promise.all(chunk.map(async (sampleName: string) => {
+                const url = this.sampleMap[sampleName];
+                const blobResp = await fetch(url);
                 const blob = await blobResp.blob();
-
-                // Generate Strudel name (bank/filename_no_ext)
-                const baseName = file.name.replace(/\.[^/.]+$/, "");
-                const registryName = `${bank.name}/${baseName}`;
 
                 // Store in DB
                 await db.samples.put({
-                    name: registryName,
+                    name: sampleName,
                     bank: bank.name,
                     data: blob
                 });
 
                 // Register live
                 const objUrl = URL.createObjectURL(blob);
-                strudelService.registerSample(registryName, objUrl);
-                
-                this.samples.set(registryName, {
-                    name: registryName,
+                strudelService.registerSample(sampleName, objUrl);
+
+                this.samples.set(sampleName, {
+                    name: sampleName,
                     path: objUrl,
                     source: 'offline',
                     bank: bank.name
                 });
             }));
-            
+
             completed += chunk.length;
-            if (onProgress) onProgress(Math.round((completed / audioFiles.length) * 100));
+            if (onProgress) onProgress(Math.round((completed / bankSamples.length) * 100));
         }
 
         // Update cache state

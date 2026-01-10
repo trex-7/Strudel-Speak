@@ -101,7 +101,7 @@ export const SampleManager: React.FC = () => {
         <div className="flex-1 flex flex-col min-h-0">
              <div className="p-3 border-b border-gray-800 bg-[#0f0f0f] flex justify-between items-center">
                  <p className="text-[10px] text-gray-500">
-                     Banks from <code>tidalcycles/Dirt-Samples</code>.
+                     Banks from <code>geikha/tidal-drum-machines</code>.
                      <br/>Download to use offline.
                  </p>
                  <button onClick={loadBanks} className="text-gray-500 hover:text-white" title="Refresh">

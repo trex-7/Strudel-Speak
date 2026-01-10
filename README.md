@@ -1,20 +1,71 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# StrudelSpeak v1.0.0
 
-# Run and deploy your AI Studio app
+AI-augmented live coding environment for Strudel music patterns.
 
-This contains everything you need to run your app locally.
+## 🚀 Quick Start
 
-View your app in AI Studio: https://ai.studio/apps/drive/1bFEbYU5CMS4k4SuQ7SJ0ztZaDlRIoSPr
+1. **Install dependencies:**
+   ```bash
+   npm install
+   ```
 
-## Run Locally
+2. **Set up API key:**
+   - Copy `.env.local.example` to `.env.local`
+   - Add your OpenRouter API key: `OPENROUTER_API_KEY=your_key_here`
+   - Or get a key from: https://openrouter.ai/keys
 
-**Prerequisites:**  Node.js
+3. **Start development server:**
+   ```bash
+   npm run dev
+   ```
 
+4. **Open in browser:**
+   - Navigate to `http://localhost:3000`
+   - Add your OpenRouter API key if prompted
+   - Start generating AI music patterns!
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## 🎵 Features
+
+- **AI Pattern Generation** - Claude-4.5-sonnet powered music composition
+- **Live Audio Engine** - Real-time Strudel pattern playback
+- **Code Editor** - Monaco editor with syntax highlighting
+- **Sample Management** - Local/cloud sample loading with caching
+- **Jam Buddy** - Automatic pattern evolution
+- **Admin Console** - Debug logs and error tracking
+
+## 🛠️ Tech Stack
+
+- **Frontend:** Next.js 15, React 19, Tailwind CSS
+- **State:** Zustand
+- **Audio:** @strudel/core, @strudel/webaudio, @strudel/transpiler
+- **AI:** OpenRouter SDK (Claude-4.5-sonnet)
+- **Storage:** IndexedDB (Dexie), Web File System API
+
+## 📁 Project Structure
+
+```
+├── app/                 # Next.js app directory
+├── components/          # React components
+├── services/           # Business logic services
+├── store/              # Zustand state management
+├── types/              # TypeScript type definitions
+└── .env.local          # Environment variables
+```
+
+## 🎼 Usage
+
+1. **Generate Patterns:** Type natural language prompts like "Create a funky bassline"
+2. **Play Music:** Click the play button to hear your compositions
+3. **Edit Code:** Modify patterns in the code editor
+4. **Load Samples:** Use the Samples tab to load drum kits and sounds
+5. **Jam Mode:** Enable auto-evolution for continuous music generation
+
+## 🔧 Development
+
+- `npm run dev` - Start development server
+- `npm run build` - Build for production
+- `npm run start` - Start production server
+
+## 📄 License
+
+This project implements the StrudelSpeak specification for AI-augmented live coding.

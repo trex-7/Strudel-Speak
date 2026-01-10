@@ -1,11 +1,12 @@
 import { strudelService } from './strudelService';
-import { geminiService } from './geminiService';
+import { openRouterService } from './openRouterService';
 import { JamMode, StrudelPattern } from '../types';
 
 type EvolutionCallback = (result: StrudelPattern) => void;
 
 class JamBuddyService {
   private mode: JamMode = JamMode.OFF;
+  private model: string | undefined;
   private lastTriggeredCycle: number = -1;
   private onEvolve: EvolutionCallback | null = null;
   private isThinking: boolean = false;
@@ -20,6 +21,10 @@ class JamBuddyService {
     console.log(`Jam Buddy Mode: ${JamMode[mode]}`);
   }
 
+  public setModel(model: string) {
+    this.model = model;
+  }
+
   public setCallback(cb: EvolutionCallback) {
     this.onEvolve = cb;
   }
@@ -27,9 +32,9 @@ class JamBuddyService {
   /**
    * Manually trigger a "Surprise" evolution
    */
-  public async triggerSurprise(chaos: number) {
+  public async triggerSurprise(chaos: number, model?: string) {
     if (this.isThinking) return;
-    await this.evolve(chaos, "Surprise me! Make a distinct variation of the current pattern but keep the tempo.");
+    await this.evolve(chaos, "Surprise me! Make a distinct variation of the current pattern but keep the tempo.", model);
   }
 
   private handleCycle(cycle: number) {
@@ -48,20 +53,21 @@ class JamBuddyService {
       
       // Auto-evolution uses a moderate chaos level usually, or we could pass it in.
       // We'll hardcode a "Jam" context chaos of 0.2 for auto-evolution to keep it stable-ish.
-      this.evolve(0.3, "Evolve this pattern. Keep the groove but add a variation or fill.");
+      this.evolve(0.3, "Evolve this pattern. Keep the groove but add a variation or fill.", this.model);
     }
   }
 
-  private async evolve(chaos: number, prompt: string) {
+  private async evolve(chaos: number, prompt: string, model?: string) {
     this.isThinking = true;
     const currentCode = strudelService.getCurrentPattern();
 
     try {
-      const result = await geminiService.generatePattern(
+      const result = await openRouterService.generatePattern(
         prompt,
         currentCode,
         chaos,
-        0 // retries handled inside geminiService
+        model,
+        0 // retries handled inside openRouterService
       );
 
       // Apply immediately
