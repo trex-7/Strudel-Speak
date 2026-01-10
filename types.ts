@@ -54,6 +54,15 @@ export interface SampleBank {
   sampleCount: number;
   isOffline: boolean;
   size?: string;
+  isKit?: boolean;
+  banks?: string[]; // List of bank names in this kit (e.g. ["bd", "sd"])
+  bankSamples?: Record<string, string[]>; // Mapping of bank name to list of sample names
+}
+
+export interface SampleAssignment {
+  sampleName: string; // The full name like "AkaiXR10:akaixr10-bd:0"
+  type: string; // The drum type like "bd", "sd", "hh", "cp"
+  kitName: string;
 }
 
 // Minimal type definitions for File System Access API

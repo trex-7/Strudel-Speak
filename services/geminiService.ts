@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { SYSTEM_PROMPT, MAX_RETRIES, API_KEY_STORAGE_KEY } from '../constants';
 import { strudelService } from './strudelService';
+import { sampleService } from './sampleService';
 import { StrudelPattern, InteractionLog } from '../types';
 
 // We use a getter to retrieve the key from storage or env
@@ -72,7 +73,9 @@ export class GeminiService {
     }
 
     // Construct Prompt
+    const sampleSchema = sampleService.getSampleSchema();
     let fullPrompt = `
+      ${sampleSchema}
       Current Pattern: ${currentPattern}
       User Request: ${userPrompt}
       Chaos Level: ${chaos}/1.0

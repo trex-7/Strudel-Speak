@@ -21,7 +21,24 @@ if (typeof window !== 'undefined') {
   // Also expose everything else just in case
   Object.assign(window, Strudel);
   
+  // Explicitly expose key functions to window for eval()
+  keysToExpose.forEach(key => {
+    // @ts-ignore
+    if (Strudel[key]) {
+      // @ts-ignore
+      window[key] = Strudel[key];
+    }
+  });
+
+  // Ensure 'm' and 's' are defined as they are critical for auditioning
+  // @ts-ignore
+  window.m = window.m || Strudel.m || Strudel.mini || StrudelCore.mini || StrudelCore.m;
+  // @ts-ignore
+  window.s = window.s || Strudel.s || StrudelCore.s;
+  
   console.log("Strudel Global Injection Complete. Available keys:", Object.keys(Strudel).length);
+  // @ts-ignore
+  console.log("m defined:", typeof window.m);
 }
 
 type CycleCallback = (cycle: number) => void;
@@ -106,6 +123,20 @@ class StrudelService {
       }
     } else {
         console.warn('Strudel.register is not available');
+    }
+  }
+
+  /**
+   * Registers a bank of samples
+   */
+  public registerBank(name: string, urls: string[]) {
+    if (typeof Strudel.samples === 'function') {
+      try {
+        Strudel.samples({ [name]: urls });
+        console.log(`Registered bank: ${name} with ${urls.length} samples`);
+      } catch (e) {
+        console.error(`Failed to register bank ${name}:`, e);
+      }
     }
   }
 
@@ -217,6 +248,57 @@ class StrudelService {
 
   public getIsPlaying() {
     return this.isPlaying;
+  }
+
+  /**
+   * Plays a pattern once (audition)
+   */
+  public async playOnce(code: string) {
+    if (!this.scheduler) return;
+    
+    try {
+        // Ensure audio context is resumed
+        const ctx = this.scheduler.audioContext || this.scheduler.context;
+        if (ctx && ctx.state === 'suspended') {
+            await ctx.resume();
+        }
+
+        const transpiledResult = transpiler(code);
+        let transpiledCode = transpiledResult.output;
+        if (transpiledCode.startsWith('return ')) {
+          transpiledCode = transpiledCode.substring(7);
+        }
+        // @ts-ignore
+        const pattern = window.eval(`(function() { return ${transpiledCode} })()`);
+        
+        if (!pattern) return;
+
+        console.log(`Auditioning: ${code}`);
+
+        // Use the scheduler to play the pattern once
+        const originalPattern = this.scheduler.pattern;
+        
+        // We use a short duration pattern
+        this.scheduler.setPattern(pattern.take(1));
+        
+        if (!this.isPlaying) {
+            this.scheduler.start();
+            setTimeout(() => {
+                if (!this.isPlaying) {
+                    this.scheduler.stop();
+                } else {
+                    this.scheduler.setPattern(originalPattern);
+                }
+            }, 2000);
+        } else {
+            // If already playing, we temporarily swap the pattern
+            setTimeout(() => {
+                this.scheduler.setPattern(originalPattern);
+            }, 2000);
+        }
+    } catch (e) {
+        console.error("Audition failed:", e);
+    }
   }
 
   // --- CYCLE POLLING FOR JAM BUDDY ---

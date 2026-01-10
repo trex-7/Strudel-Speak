@@ -1,6 +1,7 @@
 import { OpenRouter } from "@openrouter/sdk";
 import { SYSTEM_PROMPT, MAX_RETRIES, API_KEY_STORAGE_KEY } from '../constants';
 import { strudelService } from './strudelService';
+import { sampleService } from './sampleService';
 import { StrudelPattern, InteractionLog } from '../types';
 
 // We use a getter to retrieve the key from env, then storage
@@ -85,7 +86,9 @@ export class OpenRouterService {
     }
 
     // Construct Prompt
+    const sampleSchema = sampleService.getSampleSchema();
     let fullPrompt = `
+      ${sampleSchema}
       Current Pattern: ${currentPattern}
       User Request: ${userPrompt}
       Chaos Level: ${chaos}/1.0
