@@ -1,4 +1,3 @@
-import { OpenRouter } from "@openrouter/sdk";
 import { SYSTEM_PROMPT, MAX_RETRIES, API_KEY_STORAGE_KEY } from '../constants';
 import { strudelService } from './strudelService';
 import { sampleService } from './sampleService';
@@ -7,7 +6,7 @@ import { StrudelPattern, InteractionLog } from '../types';
 // We use a getter to retrieve the key from env, then storage
 const getApiKey = () => {
     // First check environment variables (server-side safe)
-    const envKey = process.env.OPENROUTER_API_KEY || process.env.NEXT_PUBLIC_OPENROUTER_API_KEY;
+    const envKey = (typeof process !== 'undefined' ? (process.env.OPENROUTER_API_KEY || (process.env as any).NEXT_PUBLIC_OPENROUTER_API_KEY) : '');
     if (envKey) return envKey;
 
     // Then check localStorage for user convenience (client-side only)
@@ -19,27 +18,27 @@ const getApiKey = () => {
 };
 
 export class OpenRouterService {
-  private ai: OpenRouter | null = null;
+  private apiKey: string = '';
   private logs: InteractionLog[] = [];
 
   constructor() {
     const key = getApiKey();
     if (key) {
-      this.ai = new OpenRouter({ apiKey: key });
+      this.apiKey = key;
     }
   }
 
   public updateKey(key: string) {
     // Only store in localStorage if no environment variable is set
-    const hasEnvKey = !!(process.env.OPENROUTER_API_KEY || process.env.NEXT_PUBLIC_OPENROUTER_API_KEY);
+    const hasEnvKey = !!(typeof process !== 'undefined' && (process.env.OPENROUTER_API_KEY || (process.env as any).NEXT_PUBLIC_OPENROUTER_API_KEY));
     if (!hasEnvKey && typeof window !== 'undefined') {
         localStorage.setItem(API_KEY_STORAGE_KEY, key);
     }
-    this.ai = new OpenRouter({ apiKey: key });
+    this.apiKey = key;
   }
 
   public hasKey(): boolean {
-    return !!this.ai;
+    return !!this.apiKey || !!getApiKey();
   }
 
   public getLogs(): InteractionLog[] {
@@ -65,7 +64,7 @@ export class OpenRouterService {
     retryCount = 0,
     currentLogId?: string
   ): Promise<StrudelPattern> {
-    if (!this.ai) throw new Error("API Key missing");
+    if (!this.hasKey()) throw new Error("API Key missing");
 
     const logId = currentLogId || crypto.randomUUID();
     const isRetry = retryCount > 0;

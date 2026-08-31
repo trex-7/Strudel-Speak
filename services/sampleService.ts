@@ -105,6 +105,11 @@ class SampleService {
     return Array.from(this.samples.values());
   }
 
+  public getSampleSchema(): string {
+    const loaded = Array.from(this.samples.keys());
+    return `Available loaded samples: ${loaded.join(', ') || 'default bank'}`;
+  }
+
   /**
    * Process and register audio files (from input, drag/drop, or directory scans)
    */

@@ -80,6 +80,7 @@ export interface InteractionLog {
   timestamp: number;
   userPrompt: string;
   chaosLevel: number;
+  model?: string;
   attempts: {
     attemptNumber: number;
     generatedCode: string;

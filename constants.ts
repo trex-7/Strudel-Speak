@@ -102,5 +102,8 @@ export const INITIAL_PATTERN = `stack(
 
 export const MAX_RETRIES = 3;
 
+// Default AI Model
+export const DEFAULT_MODEL = 'google/gemini-2.5-flash';
+
 // Storage key for API Key
 export const API_KEY_STORAGE_KEY = 'strudel_speak_gemini_key';
