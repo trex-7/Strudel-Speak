@@ -1,28 +1,48 @@
-import React, { useState, useEffect } from 'react';
-import { FolderOpen, Database, Music, AlertCircle, Cloud, Download, Check, Trash2, Loader2, RefreshCw, Play, Plus, X, ChevronDown, ChevronRight } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  FolderOpen, 
+  Database, 
+  Music, 
+  AlertCircle, 
+  Cloud, 
+  Download, 
+  Check, 
+  Trash2, 
+  Loader2, 
+  RefreshCw, 
+  Upload, 
+  Copy, 
+  Search,
+  HardDrive,
+  Sparkles,
+  Play,
+  Volume2
+} from 'lucide-react';
 import { sampleService } from '../services/sampleService';
-import { Sample, SampleBank, SampleAssignment } from '../types';
-
-const DRUM_TYPES = ['bd', 'sd', 'hh', 'oh', 'cp', 'mt', 'lt', 'ht'];
+import { embeddedSoundBank, EMBEDDED_SOUND_CATALOG, EmbeddedSoundInfo } from '../services/embeddedSoundBank';
+import { Sample, SampleBank } from '../types';
 
 export const SampleManager: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'local' | 'cloud' | 'session'>('cloud');
+  const [activeTab, setActiveTab] = useState<'demo' | 'cloud' | 'local'>('demo');
   const [samples, setSamples] = useState<Sample[]>([]);
   const [banks, setBanks] = useState<SampleBank[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isSupported] = useState(sampleService.getIsSupported());
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState<Record<string, number>>({});
-  const [expandedKits, setExpandedKits] = useState<Set<string>>(new Set());
-  const [expandedBanks, setExpandedBanks] = useState<Set<string>>(new Set()); // key: "kit:bank"
-  const [assignments, setAssignments] = useState<SampleAssignment[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [copiedSample, setCopiedSample] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [playingSound, setPlayingSound] = useState<string | null>(null);
+
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     refreshSamples();
     if (activeTab === 'cloud') {
-        loadBanks();
+      loadBanks();
     }
-    setAssignments(sampleService.getAssignments());
   }, [activeTab]);
 
   const refreshSamples = () => {
@@ -30,344 +50,543 @@ export const SampleManager: React.FC = () => {
   };
 
   const loadBanks = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-          const fetchedBanks = await sampleService.fetchGithubBanks();
-          setBanks(fetchedBanks);
-      } catch (e: any) {
-          setError("Failed to fetch banks from GitHub. API rate limit may be exceeded.");
-      } finally {
-          setLoading(false);
-      }
-  };
-
-  const handleLinkFolder = async () => {
     setLoading(true);
     setError(null);
     try {
-      await sampleService.linkLocalFolder();
-      refreshSamples();
-    } catch (err: any) {
-      console.error(err);
-      setError(err.message || 'Failed to link folder');
+      const fetchedBanks = await sampleService.fetchGithubBanks();
+      setBanks(fetchedBanks);
+    } catch (e: any) {
+      setError('Failed to fetch banks catalogue.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDownloadBank = async (bank: SampleBank) => {
-      setDownloadProgress(prev => ({ ...prev, [bank.name]: 0 }));
+  const showNotification = (msg: string) => {
+    setSuccessMsg(msg);
+    setTimeout(() => setSuccessMsg(null), 3000);
+  };
+
+  const handleAuditionSound = async (soundName: string) => {
+    setPlayingSound(soundName);
+    try {
+      await embeddedSoundBank.playSound(soundName);
+    } catch (e) {
+      // ignore
+    } finally {
+      setTimeout(() => {
+        setPlayingSound(null);
+      }, 500);
+    }
+  };
+
+  const handleFolderSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const count = await sampleService.loadFiles(e.target.files);
+      refreshSamples();
+      showNotification(`Successfully imported ${count} samples!`);
+    } catch (err: any) {
+      setError(err.message || 'Failed to process selected folder.');
+    } finally {
+      setLoading(false);
+      if (folderInputRef.current) folderInputRef.current.value = '';
+    }
+  };
+
+  const handleFilesSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const count = await sampleService.loadFiles(e.target.files);
+      refreshSamples();
+      showNotification(`Successfully imported ${count} audio files!`);
+    } catch (err: any) {
+      setError(err.message || 'Failed to process files.');
+    } finally {
+      setLoading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleLinkFolderClick = async () => {
+    setError(null);
+    if (typeof window !== 'undefined' && 'showDirectoryPicker' in window) {
       try {
-          await sampleService.downloadBank(bank, (percent) => {
-              setDownloadProgress(prev => ({ ...prev, [bank.name]: percent }));
-          });
-          // Refresh bank state
-          const updatedBanks = await sampleService.fetchGithubBanks();
-          setBanks(updatedBanks);
-          refreshSamples();
-      } catch (e: any) {
-          setError(`Failed to download ${bank.name}`);
+        // @ts-ignore
+        const dirHandle = await window.showDirectoryPicker();
+        setLoading(true);
+        const count = await sampleService.loadFromDirectoryHandle(dirHandle);
+        refreshSamples();
+        showNotification(`Linked local directory: ${count} audio samples registered!`);
+        return;
+      } catch (err: any) {
+        if (err.name === 'AbortError') return;
       } finally {
-          setDownloadProgress(prev => {
-              const next = { ...prev };
-              delete next[bank.name];
-              return next;
-          });
+        setLoading(false);
       }
+    }
+    folderInputRef.current?.click();
+  };
+
+  const handleCopyCode = (name: string, syntax?: string) => {
+    const code = syntax || `s("${name}")`;
+    navigator.clipboard.writeText(code);
+    setCopiedSample(name);
+    showNotification(`Copied to clipboard: ${code}`);
+    setTimeout(() => setCopiedSample(null), 2000);
+  };
+
+  const handleDownloadBank = async (bankName: string) => {
+    setError(null);
+    try {
+      await sampleService.downloadBank(bankName, (progress) => {
+        setDownloadProgress((prev) => ({ ...prev, [bankName]: progress }));
+      });
+      showNotification(`Bank '${bankName}' downloaded for offline use!`);
+      const updatedBanks = await sampleService.fetchGithubBanks();
+      setBanks(updatedBanks);
+      refreshSamples();
+    } catch (err: any) {
+      setError(err.message || `Failed to download bank ${bankName}`);
+    } finally {
+      setDownloadProgress((prev) => {
+        const next = { ...prev };
+        delete next[bankName];
+        return next;
+      });
+    }
   };
 
   const handleDeleteBank = async (bankName: string) => {
-      if(!confirm(`Delete offline cache for ${bankName}?`)) return;
-      await sampleService.deleteBank(bankName);
-      const updatedBanks = await sampleService.fetchGithubBanks();
-      setBanks(updatedBanks);
+    await sampleService.deleteBank(bankName);
+    const updatedBanks = await sampleService.fetchGithubBanks();
+    setBanks(updatedBanks);
+    refreshSamples();
   };
 
-  const toggleKit = (kitName: string) => {
-      const next = new Set(expandedKits);
-      if (next.has(kitName)) next.delete(kitName);
-      else next.add(kitName);
-      setExpandedKits(next);
+  const handleDeleteLocalSample = async (sampleName: string) => {
+    await sampleService.deleteLocalSample(sampleName);
+    refreshSamples();
+    showNotification(`Removed sample '${sampleName}'`);
   };
 
-  const toggleBank = (kitName: string, bankName: string) => {
-      const key = `${kitName}:${bankName}`;
-      const next = new Set(expandedBanks);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      setExpandedBanks(next);
-  };
+  // Filtered lists
+  const filteredDemoSounds = EMBEDDED_SOUND_CATALOG.filter((item) =>
+    item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    item.aliases.some((a) => a.toLowerCase().includes(searchQuery.toLowerCase()))
+  );
 
-  const handleAudition = (sampleName: string) => {
-      sampleService.auditionSample(sampleName);
-  };
+  const filteredBanks = banks.filter((b) =>
+    b.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
-  const handleAssign = (kitName: string, bankName: string, index: number, type: string) => {
-      const sampleName = `${kitName}:${bankName}:${index}`;
-      sampleService.assignSample({ kitName, sampleName, type });
-      setAssignments([...sampleService.getAssignments()]);
-  };
-
-  const handleRemoveAssignment = (type: string) => {
-      sampleService.removeAssignment(type);
-      setAssignments([...sampleService.getAssignments()]);
-  };
+  const localSamples = samples.filter((s) => s.source === 'local');
+  const filteredLocalSamples = localSamples.filter((s) =>
+    s.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   return (
-    <div className="flex flex-col h-full bg-[#121212] text-gray-300">
-      {/* Tabs */}
-      <div className="flex border-b border-gray-800">
-          <button 
-            onClick={() => setActiveTab('cloud')}
-            className={`flex-1 py-2 text-xs font-semibold flex items-center justify-center gap-2 ${activeTab === 'cloud' ? 'text-blue-400 bg-[#1e1e1e] border-b-2 border-blue-400' : 'text-gray-500 hover:text-gray-300'}`}
-          >
-            <Cloud size={14} /> GITHUB
-          </button>
-          <button 
-            onClick={() => setActiveTab('session')}
-            className={`flex-1 py-2 text-xs font-semibold flex items-center justify-center gap-2 ${activeTab === 'session' ? 'text-purple-400 bg-[#1e1e1e] border-b-2 border-purple-400' : 'text-gray-500 hover:text-gray-300'}`}
-          >
-            <Music size={14} /> SESSION
-          </button>
-          <button 
-            onClick={() => setActiveTab('local')}
-            className={`flex-1 py-2 text-xs font-semibold flex items-center justify-center gap-2 ${activeTab === 'local' ? 'text-green-400 bg-[#1e1e1e] border-b-2 border-green-400' : 'text-gray-500 hover:text-gray-300'}`}
-          >
-            <FolderOpen size={14} /> LOCAL
-          </button>
+    <div className="flex flex-col h-full bg-[#121212] text-gray-300 select-none">
+      {/* Hidden File / Folder Inputs */}
+      <input
+        type="file"
+        ref={folderInputRef}
+        onChange={handleFolderSelect}
+        // @ts-ignore
+        webkitdirectory=""
+        directory=""
+        multiple
+        className="hidden"
+      />
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFilesSelect}
+        multiple
+        accept="audio/*,.wav,.mp3,.ogg,.flac,.aif,.aiff,.m4a"
+        className="hidden"
+      />
+
+      {/* Tabs Header */}
+      <div className="flex border-b border-gray-800 bg-[#0d0d0d]">
+        <button
+          onClick={() => {
+            setActiveTab('demo');
+            setSearchQuery('');
+          }}
+          className={`flex-1 py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+            activeTab === 'demo'
+              ? 'text-purple-400 bg-[#18181b] border-b-2 border-purple-400'
+              : 'text-gray-500 hover:text-gray-300'
+          }`}
+        >
+          <Sparkles size={13} className="text-purple-400" />
+          <span>DEMO KIT ({EMBEDDED_SOUND_CATALOG.length})</span>
+        </button>
+        <button
+          onClick={() => {
+            setActiveTab('cloud');
+            setSearchQuery('');
+          }}
+          className={`flex-1 py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+            activeTab === 'cloud'
+              ? 'text-blue-400 bg-[#18181b] border-b-2 border-blue-400'
+              : 'text-gray-500 hover:text-gray-300'
+          }`}
+        >
+          <Cloud size={13} />
+          <span>DIRT</span>
+        </button>
+        <button
+          onClick={() => {
+            setActiveTab('local');
+            setSearchQuery('');
+          }}
+          className={`flex-1 py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
+            activeTab === 'local'
+              ? 'text-green-400 bg-[#18181b] border-b-2 border-green-400'
+              : 'text-gray-500 hover:text-gray-300'
+          }`}
+        >
+          <HardDrive size={13} />
+          <span>CUSTOM {localSamples.length > 0 && `(${localSamples.length})`}</span>
+        </button>
       </div>
 
-      {/* Cloud Tab */}
+      {/* Search Bar */}
+      <div className="px-3 py-2 border-b border-gray-800 bg-[#141416] flex items-center gap-2">
+        <Search size={14} className="text-gray-500 flex-shrink-0" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder={
+            activeTab === 'demo'
+              ? 'Filter demo sounds (kick, acid, juno, riser)...'
+              : activeTab === 'cloud'
+              ? 'Filter sound banks (e.g. 808, bd, rave)...'
+              : 'Filter loaded samples...'
+          }
+          className="w-full bg-transparent text-xs text-gray-200 placeholder-gray-600 focus:outline-none"
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery('')}
+            className="text-[10px] text-gray-500 hover:text-gray-300 font-mono"
+          >
+            CLEAR
+          </button>
+        )}
+      </div>
+
+      {/* 1. EMBEDDED DEMO SOUND SET TAB */}
+      {activeTab === 'demo' && (
+        <div className="flex-1 flex flex-col min-h-0">
+          <div className="p-3 border-b border-gray-800 bg-[#0f0f0f] flex justify-between items-center">
+            <div>
+              <p className="text-[11px] font-bold text-gray-200 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                Preloaded Studio Demo Bank
+              </p>
+              <p className="text-[10px] text-gray-400">
+                100% offline & instant. Tap play to audition or copy snippet.
+              </p>
+            </div>
+            <span className="text-[10px] bg-purple-950/80 border border-purple-800 text-purple-300 px-2 py-0.5 rounded font-mono">
+              READY
+            </span>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-2 space-y-1.5 no-scrollbar">
+            {filteredDemoSounds.length === 0 ? (
+              <div className="text-center py-8 text-xs text-gray-500">
+                No demo sounds match "{searchQuery}"
+              </div>
+            ) : (
+              filteredDemoSounds.map((item) => {
+                const isPlaying = playingSound === item.name;
+                const categoryColor =
+                  item.category === 'drums'
+                    ? 'border-blue-900/60 bg-blue-950/30 text-blue-300'
+                    : item.category === 'synths'
+                    ? 'border-purple-900/60 bg-purple-950/30 text-purple-300'
+                    : 'border-pink-900/60 bg-pink-950/30 text-pink-300';
+
+                return (
+                  <div
+                    key={item.name}
+                    className="flex items-center justify-between p-2 bg-[#18181b] hover:bg-[#202026] rounded-lg border border-gray-800/80 hover:border-gray-700 transition-all group"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {/* Audition Button */}
+                      <button
+                        onClick={() => handleAuditionSound(item.name)}
+                        className={`w-7 h-7 rounded-md flex items-center justify-center transition-all ${
+                          isPlaying
+                            ? 'bg-purple-600 text-white scale-105'
+                            : 'bg-gray-800 hover:bg-purple-700 text-gray-300 hover:text-white'
+                        }`}
+                        title={`Audition sound: ${item.name}`}
+                      >
+                        {isPlaying ? <Volume2 size={13} className="animate-pulse" /> : <Play size={12} className="ml-0.5" />}
+                      </button>
+
+                      <div className="flex flex-col min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-mono font-bold text-gray-100">
+                            {item.name}
+                          </span>
+                          <span className={`text-[9px] font-mono px-1 py-0.2 rounded border uppercase ${categoryColor}`}>
+                            {item.category}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-gray-400 truncate">
+                          {item.description}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Copy Strudel Code */}
+                    <button
+                      onClick={() => handleCopyCode(item.name, item.syntaxExample)}
+                      className="p-1.5 rounded text-gray-500 hover:text-purple-300 hover:bg-purple-950/50 transition-colors flex-shrink-0"
+                      title={`Copy syntax: ${item.syntaxExample}`}
+                    >
+                      {copiedSample === item.name ? (
+                        <Check size={13} className="text-green-400" />
+                      ) : (
+                        <Copy size={13} />
+                      )}
+                    </button>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 2. Cloud Dirt-Samples Tab */}
       {activeTab === 'cloud' && (
         <div className="flex-1 flex flex-col min-h-0">
-             <div className="p-3 border-b border-gray-800 bg-[#0f0f0f] flex justify-between items-center">
-                 <p className="text-[10px] text-gray-500">
-                     Kits from <code>geikha/tidal-drum-machines</code>.
-                     <br/>Download to use offline.
-                 </p>
-                 <button onClick={loadBanks} className="text-gray-500 hover:text-white" title="Refresh">
-                     <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-                 </button>
-             </div>
-             
-             <div className="flex-1 overflow-y-auto p-2 space-y-2">
-                 {loading && banks.length === 0 ? (
-                     <div className="text-center py-8 text-xs text-gray-500 flex flex-col items-center">
-                         <Loader2 className="animate-spin mb-2" size={20} />
-                         Fetching Kits...
-                     </div>
-                 ) : (
-                     banks.map(bank => (
-                         <div key={bank.name} className="flex flex-col bg-[#18181b] rounded border border-gray-800 overflow-hidden">
-                             <div className="flex items-center justify-between p-2 hover:bg-[#202024] transition-colors cursor-pointer" onClick={() => toggleKit(bank.name)}>
-                                 <div className="flex items-center gap-3">
-                                     <div className={`w-8 h-8 rounded flex items-center justify-center text-xs font-bold ${bank.isOffline ? 'bg-green-900/30 text-green-400' : 'bg-gray-800 text-gray-500'}`}>
-                                         {expandedKits.has(bank.name) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                                     </div>
-                                     <div className="flex flex-col">
-                                         <span className="text-xs font-bold text-gray-300">{bank.name}</span>
-                                         <span className="text-[10px] text-gray-600">
-                                             {bank.isKit ? `${bank.banks?.length || 0} banks • ` : ''}
-                                             {bank.isOffline ? 'Offline Ready' : 'Online Only'}
-                                         </span>
-                                     </div>
-                                 </div>
-                                 
-                                 <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
-                                     {downloadProgress[bank.name] !== undefined ? (
-                                         <div className="text-[10px] font-mono text-blue-400 w-12 text-right">
-                                             {downloadProgress[bank.name]}%
-                                         </div>
-                                     ) : bank.isOffline ? (
-                                         <button 
-                                            onClick={() => handleDeleteBank(bank.name)}
-                                            className="p-1.5 text-gray-500 hover:text-red-400 transition-colors"
-                                            title="Delete Cache"
-                                         >
-                                             <Trash2 size={14} />
-                                         </button>
-                                     ) : (
-                                         <button 
-                                            onClick={() => handleDownloadBank(bank)}
-                                            className="p-1.5 text-gray-400 hover:text-blue-400 transition-colors"
-                                            title="Download Kit"
-                                         >
-                                             <Download size={14} />
-                                         </button>
-                                     )}
-                                 </div>
-                             </div>
+          <div className="p-3 border-b border-gray-800 bg-[#0f0f0f] flex justify-between items-center">
+            <div>
+              <p className="text-[11px] font-medium text-gray-300">
+                TidalCycles Dirt-Samples
+              </p>
+              <p className="text-[10px] text-gray-500">
+                Stream live or download banks for instant offline playback.
+              </p>
+            </div>
+            <button
+              onClick={loadBanks}
+              className="p-1.5 text-gray-500 hover:text-white rounded bg-gray-900 border border-gray-800 transition-colors"
+              title="Refresh Bank List"
+            >
+              <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+            </button>
+          </div>
 
-                             {expandedKits.has(bank.name) && (
-                                 <div className="p-2 bg-[#0f0f0f] border-t border-gray-800 space-y-1">
-                                     {bank.banks?.map(subBank => (
-                                         <div key={subBank} className="flex flex-col">
-                                             <div 
-                                                className="flex items-center justify-between p-1.5 rounded hover:bg-gray-800 group cursor-pointer"
-                                                onClick={() => toggleBank(bank.name, subBank)}
-                                             >
-                                                 <div className="flex items-center gap-2">
-                                                     {expandedBanks.has(`${bank.name}:${subBank}`) ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-                                                     <Music size={12} className="text-gray-600" />
-                                                     <span className="text-[11px] text-gray-400">{subBank}</span>
-                                                 </div>
-                                                 <div className="flex items-center gap-1">
-                                                     <span className="text-[9px] text-gray-600 mr-2">{bank.bankSamples?.[subBank]?.length || 0} samples</span>
-                                                 </div>
-                                             </div>
-                                             
-                                             {expandedBanks.has(`${bank.name}:${subBank}`) && (
-                                                 <div className="ml-4 pl-2 border-l border-gray-800 space-y-1 my-1">
-                                                     {bank.bankSamples?.[subBank]?.map((sampleFile, idx) => (
-                                                         <div key={idx} className="flex items-center justify-between p-1 rounded hover:bg-gray-800/50 group/sample">
-                                                             <span className="text-[10px] text-gray-500 truncate max-w-[120px]">{sampleFile}</span>
-                                                             <div className="flex items-center gap-1">
-                                                                 <button 
-                                                                    onClick={() => handleAudition(`${bank.name}:${subBank}:${idx}`)}
-                                                                    className="p-1 text-gray-600 hover:text-blue-400"
-                                                                    title="Audition"
-                                                                 >
-                                                                     <Play size={10} />
-                                                                 </button>
-                                                                 <div className="relative group/menu">
-                                                                     <button className="p-1 text-gray-600 hover:text-purple-400" title="Assign to Session">
-                                                                         <Plus size={10} />
-                                                                     </button>
-                                                                     <div className="absolute right-0 bottom-full mb-1 hidden group-hover/menu:flex flex-col bg-[#252529] border border-gray-700 rounded shadow-xl z-50 min-w-[80px]">
-                                                                         {DRUM_TYPES.map(type => (
-                                                                             <button 
-                                                                                key={type}
-                                                                                onClick={() => handleAssign(bank.name, subBank, idx, type)}
-                                                                                className="px-2 py-1 text-[10px] text-left hover:bg-purple-600 hover:text-white transition-colors"
-                                                                             >
-                                                                                 Assign to {type.toUpperCase()}
-                                                                             </button>
-                                                                         ))}
-                                                                     </div>
-                                                                 </div>
-                                                             </div>
-                                                         </div>
-                                                     ))}
-                                                 </div>
-                                             )}
-                                         </div>
-                                     ))}
-                                 </div>
-                             )}
-                         </div>
-                     ))
-                 )}
-             </div>
+          <div className="flex-1 overflow-y-auto p-2 space-y-1.5 no-scrollbar">
+            {loading && banks.length === 0 ? (
+              <div className="text-center py-10 text-xs text-gray-500 flex flex-col items-center">
+                <Loader2 className="animate-spin mb-2 text-blue-400" size={22} />
+                Loading sound banks catalogue...
+              </div>
+            ) : filteredBanks.length === 0 ? (
+              <div className="text-center py-8 text-xs text-gray-500">
+                No banks match "{searchQuery}"
+              </div>
+            ) : (
+              filteredBanks.map((bank) => (
+                <div
+                  key={bank.name}
+                  className="flex items-center justify-between p-2.5 bg-[#18181b] rounded-lg border border-gray-800/80 hover:border-gray-700 transition-all group"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div
+                      className={`w-8 h-8 rounded-md flex items-center justify-center text-[11px] font-bold font-mono ${
+                        bank.isOffline
+                          ? 'bg-green-950 text-green-400 border border-green-800/50'
+                          : 'bg-gray-800/80 text-gray-400'
+                      }`}
+                    >
+                      {bank.name.substring(0, 2).toUpperCase()}
+                    </div>
+                    <div className="flex flex-col min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-gray-200 truncate font-mono">
+                          {bank.name}
+                        </span>
+                        <button
+                          onClick={() => handleCopyCode(bank.name)}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-gray-500 hover:text-blue-400 flex items-center gap-1"
+                          title="Copy s('bank') snippet"
+                        >
+                          {copiedSample === bank.name ? (
+                            <Check size={11} className="text-green-400" />
+                          ) : (
+                            <Copy size={11} />
+                          )}
+                        </button>
+                      </div>
+                      <span className="text-[10px] text-gray-500">
+                        {bank.isOffline ? (
+                          <span className="text-green-400 font-medium">Offline Cached</span>
+                        ) : (
+                          'Ready to stream/download'
+                        )}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {downloadProgress[bank.name] !== undefined ? (
+                      <div className="flex items-center gap-1.5 text-xs text-blue-400">
+                        <Loader2 size={13} className="animate-spin" />
+                        <span className="font-mono text-[10px]">{downloadProgress[bank.name]}%</span>
+                      </div>
+                    ) : bank.isOffline ? (
+                      <button
+                        onClick={() => handleDeleteBank(bank.name)}
+                        className="p-1.5 text-gray-500 hover:text-red-400 rounded hover:bg-gray-800 transition-colors"
+                        title="Delete from offline cache"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleDownloadBank(bank.name)}
+                        className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium bg-[#27272a] hover:bg-blue-600 text-gray-300 hover:text-white rounded transition-colors"
+                        title="Save for offline usage"
+                      >
+                        <Download size={12} />
+                        Download
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       )}
 
-      {/* Session Tab */}
-      {activeTab === 'session' && (
-          <div className="flex-1 flex flex-col min-h-0">
-              <div className="p-3 border-b border-gray-800 bg-[#0f0f0f]">
-                  <h3 className="text-xs font-bold text-purple-400 uppercase tracking-wider">Current Session Assignments</h3>
-                  <p className="text-[10px] text-gray-500 mt-1">These samples will be used by the AI for code generation.</p>
-              </div>
-              <div className="flex-1 overflow-y-auto p-2 space-y-2">
-                  {assignments.length === 0 ? (
-                      <div className="h-32 flex flex-col items-center justify-center text-gray-600 text-xs text-center px-4">
-                          <Music size={24} className="mb-2 opacity-20" />
-                          <span>No samples assigned yet.</span>
-                          <button onClick={() => setActiveTab('cloud')} className="mt-2 text-purple-400 hover:underline">Browse Kits</button>
-                      </div>
-                  ) : (
-                      assignments.map(a => (
-                          <div key={a.type} className="flex items-center justify-between p-2 bg-[#1e1e24] rounded border border-purple-900/30">
-                              <div className="flex items-center gap-3">
-                                  <div className="w-8 h-8 rounded bg-purple-900/30 flex items-center justify-center text-[10px] font-bold text-purple-400">
-                                      {a.type.toUpperCase()}
-                                  </div>
-                                  <div className="flex flex-col">
-                                      <span className="text-[11px] font-bold text-gray-200">{a.sampleName}</span>
-                                      <span className="text-[9px] text-gray-500">Kit: {a.kitName}</span>
-                                  </div>
-                              </div>
-                              <div className="flex items-center gap-1">
-                                  <button 
-                                    onClick={() => handleAudition(a.sampleName)}
-                                    className="p-1.5 text-gray-500 hover:text-blue-400"
-                                  >
-                                      <Play size={14} />
-                                  </button>
-                                  <button 
-                                    onClick={() => handleRemoveAssignment(a.type)}
-                                    className="p-1.5 text-gray-500 hover:text-red-400"
-                                  >
-                                      <X size={14} />
-                                  </button>
-                              </div>
-                          </div>
-                      ))
-                  )}
-              </div>
-          </div>
-      )}
-
-      {/* Local Tab */}
+      {/* 3. Custom Local Samples Tab */}
       {activeTab === 'local' && (
         <div className="flex-1 flex flex-col min-h-0">
-            <div className="p-4 border-b border-gray-800 bg-[#0f0f0f]">
-                {!isSupported ? (
-                <div className="p-3 bg-red-900/20 border border-red-900/50 rounded flex items-center gap-2 text-xs text-red-300">
-                    <AlertCircle size={14} />
-                    Browser not supported
-                </div>
-                ) : (
-                <button
-                    onClick={handleLinkFolder}
-                    disabled={loading}
-                    className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm py-2 px-4 rounded transition-colors"
+          <div className="p-3 border-b border-gray-800 bg-[#0f0f0f] space-y-2">
+            <div className="flex justify-between items-center">
+              <span className="text-xs font-semibold text-gray-200">Custom Audio Files</span>
+              <button
+                onClick={() => sampleService.clearAllCustomSamples().then(refreshSamples)}
+                className="text-[10px] text-gray-500 hover:text-red-400"
+              >
+                Clear All
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={handleLinkFolderClick}
+                disabled={loading}
+                className="flex items-center justify-center gap-1.5 py-2 px-3 bg-[#1e1e24] hover:bg-[#282830] border border-gray-700/60 rounded text-xs font-medium text-purple-300 transition-all shadow-sm"
+              >
+                <FolderOpen size={14} />
+                Link Folder
+              </button>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={loading}
+                className="flex items-center justify-center gap-1.5 py-2 px-3 bg-[#1e1e24] hover:bg-[#282830] border border-gray-700/60 rounded text-xs font-medium text-blue-300 transition-all shadow-sm"
+              >
+                <Upload size={14} />
+                Add Files
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-2 space-y-1.5 no-scrollbar">
+            {filteredLocalSamples.length === 0 ? (
+              <div className="text-center py-12 px-4">
+                <Music className="mx-auto mb-2 text-gray-600" size={28} />
+                <p className="text-xs text-gray-400 font-medium">No custom samples loaded</p>
+                <p className="text-[11px] text-gray-600 mt-1">
+                  Drag and drop audio files anywhere or link a folder.
+                </p>
+              </div>
+            ) : (
+              filteredLocalSamples.map((sample) => (
+                <div
+                  key={sample.name}
+                  className="flex items-center justify-between p-2.5 bg-[#18181b] rounded-lg border border-gray-800/80 hover:border-gray-700 transition-all group"
                 >
-                    {loading ? (
-                    <span className="animate-pulse">Scanning...</span>
-                    ) : (
-                    <>
-                        <FolderOpen size={16} />
-                        Link Local Folder
-                    </>
-                    )}
-                </button>
-                )}
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                {samples.filter(s => s.source === 'local').length === 0 ? (
-                <div className="h-32 flex flex-col items-center justify-center text-gray-600 text-xs text-center px-4">
-                    <Music size={24} className="mb-2 opacity-20" />
-                    <span>No local samples loaded.</span>
-                </div>
-                ) : (
-                samples.filter(s => s.source === 'local').map((sample) => (
-                    <div 
-                    key={sample.name}
-                    className="flex items-center gap-2 p-2 rounded hover:bg-gray-800 group transition-colors cursor-default"
-                    >
-                    <Music size={12} className="text-gray-500 group-hover:text-green-400" />
-                    <span className="text-xs font-mono text-gray-300 truncate select-all">
-                        {sample.name}
-                    </span>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-7 h-7 rounded bg-green-950/60 border border-green-800/40 flex items-center justify-center text-green-400 text-xs font-mono">
+                      WAV
                     </div>
-                ))
-                )}
-            </div>
+                    <div className="flex flex-col min-w-0">
+                      <span className="text-xs font-mono font-medium text-gray-200 truncate">
+                        {sample.name}
+                      </span>
+                      <span className="text-[10px] text-gray-500 font-mono">
+                        {sample.bank}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => handleCopyCode(sample.name)}
+                      className="p-1 text-gray-500 hover:text-green-400 transition-colors"
+                      title="Copy Strudel code"
+                    >
+                      {copiedSample === sample.name ? (
+                        <Check size={13} className="text-green-400" />
+                      ) : (
+                        <Copy size={13} />
+                      )}
+                    </button>
+                    <button
+                      onClick={() => handleDeleteLocalSample(sample.name)}
+                      className="p-1 text-gray-500 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+                      title="Delete local sample"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       )}
 
-      {/* Error / Status Bar */}
-      {error && (
-        <div className="p-3 bg-red-900/10 border-t border-red-900/20 text-xs text-red-400">
-          {error}
+      {/* Success Notification */}
+      {successMsg && (
+        <div className="p-2.5 bg-green-950/60 border-t border-green-800/50 text-xs text-green-300 flex items-center gap-2 animate-fadeIn">
+          <Check size={14} className="text-green-400 flex-shrink-0" />
+          <span>{successMsg}</span>
         </div>
       )}
-      <div className="p-2 border-t border-gray-800 text-[10px] text-gray-600 flex justify-between">
-          <span>Loaded Samples: {samples.length}</span>
-          <span>IndexedDB: {isSupported ? 'Active' : 'N/A'}</span>
+
+      {/* Error Message */}
+      {error && (
+        <div className="p-2.5 bg-red-950/50 border-t border-red-900/40 text-xs text-red-300 flex items-center gap-2 animate-fadeIn">
+          <AlertCircle size={14} className="text-red-400 flex-shrink-0" />
+          <span className="truncate">{error}</span>
+        </div>
+      )}
+
+      {/* Footer Info */}
+      <div className="p-2 border-t border-gray-800/80 bg-[#0d0d0d] text-[10px] text-gray-500 flex justify-between font-mono">
+        <span>Active Demo Sounds: {EMBEDDED_SOUND_CATALOG.length}</span>
+        <span>Local Audio Engine: Ready</span>
       </div>
     </div>
   );

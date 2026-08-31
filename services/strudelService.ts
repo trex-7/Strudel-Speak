@@ -1,236 +1,369 @@
-// Import Strudel packages
 import * as StrudelCore from '@strudel/core';
-import * as StrudelWebAudio from '@strudel/webaudio';
-import { transpiler } from '@strudel/transpiler';
 import { StrudelError } from '../types';
+import { embeddedSoundBank } from './embeddedSoundBank';
 
-// Combine core and webaudio
-const Strudel = { ...StrudelCore, ...StrudelWebAudio };
-
-// Expose Strudel functions to global scope so eval() works with generated code
+// Expose core Strudel pattern combinators to global scope immediately
 if (typeof window !== 'undefined') {
-  // We assign properties individually to avoid overwriting existing window properties dangerously
-  // but we need key Strudel functions available globally for the pattern eval
-  const keysToExpose = [
-    's', 'stack', 'slow', 'fast', 'note', 'n', 'sound', 'cat', 'choose', 'rand', 'saw', 'sine', 'tri', 'sq', 
-    'shape', 'gain', 'room', 'size', 'delay', 'orbit', 'vowel', 'speed', 'pan', 'jux', 'rank', 'silence',
-    'min', 'max', 'add', 'sub', 'mul', 'div', 'scale', 'm', 'f', 'cycle', 'getCycle', 'samples', 'register',
-    'every', 'chunk', 'palindrome', 'iter', 'early', 'late', 'loopAt', 'slice', 'splice', 'legato'
-  ];
-  
-  // Also expose everything else just in case
-  Object.assign(window, Strudel);
-  
-  // Explicitly expose key functions to window for eval()
-  keysToExpose.forEach(key => {
-    // @ts-ignore
-    if (Strudel[key]) {
-      // @ts-ignore
-      window[key] = Strudel[key];
-    }
-  });
-
-  // Ensure 'm' and 's' are defined as they are critical for auditioning
-  // @ts-ignore
-  window.m = window.m || Strudel.m || Strudel.mini || StrudelCore.mini || StrudelCore.m;
-  // @ts-ignore
-  window.s = window.s || Strudel.s || StrudelCore.s;
-  
-  console.log("Strudel Global Injection Complete. Available keys:", Object.keys(Strudel).length);
-  // @ts-ignore
-  console.log("m defined:", typeof window.m);
+  const coreObj = (StrudelCore as any).default || StrudelCore;
+  Object.assign(window, coreObj);
+  if (!(window as any).rev) {
+    (window as any).rev = (p: any) => (p && typeof p.rev === 'function' ? p.rev() : p);
+  }
 }
 
-type CycleCallback = (cycle: number) => void;
+export interface CycleInfo {
+  cycle: number;
+  phase: number; // 0.0 to 1.0 within current cycle
+  beat: number; // 1, 2, 3, or 4
+  step16: number; // 0 to 15
+  step8: number; // 0 to 7
+  cps: number;
+  bpm: number;
+  isPlaying: boolean;
+}
+
+type CycleCallback = (info: CycleInfo) => void;
 
 class StrudelService {
-  private scheduler: any = null;
   private isPlaying: boolean = false;
   private currentCode: string = '';
   private cycleCallbacks: Set<CycleCallback> = new Set();
   private pollInterval: number | null = null;
+  private isInitialized: boolean = false;
+  private initPromise: Promise<void> | null = null;
+  private cps: number = 0.5; // standard 120 bpm (0.5 cycles per second = 2 sec per cycle)
+  private playStartTime: number = 0;
+  private activePlayer: any = null;
 
   constructor() {
-    console.log('Strudel Engine Initializing...');
-
-    // Initialize audio context
-    if (typeof Strudel.initAudio === 'function') {
-      Strudel.initAudio();
-      console.log('Audio context initialized');
-    }
-
-    // Initialize WebAudio and get scheduler
-    try {
-      if (Strudel.webaudioRepl) {
-          this.scheduler = Strudel.webaudioRepl();
-          console.log('Using Strudel webaudioRepl as scheduler');
-      } else if (Strudel.superdough) {
-          this.scheduler = Strudel.superdough();
-          console.log('Using Strudel superdough as scheduler');
-      } else {
-          console.error('CRITICAL: Could not find Strudel scheduler (webaudioRepl or superdough).');
-          console.log('Available Strudel exports keys:', Object.keys(Strudel));
-      }
-    } catch (e) {
-      console.error('Failed to initialize Strudel scheduler:', e);
-    }
-
-    // Initialize default samples path if function exists - moved to initAudio
+    this.init();
   }
 
-  private async initAudio() {
-    if (!this.scheduler) return;
+  /**
+   * Initializes the Strudel Web environment
+   */
+  public async init(): Promise<void> {
+    if (this.isInitialized) return;
+    if (this.initPromise) return this.initPromise;
 
-    try {
-      // Access audioContext from scheduler
-      // Note: Implementation details of AudioContext access vary by version
-      const ctx = this.scheduler.audioContext || this.scheduler.context;
+    this.initPromise = (async () => {
+      try {
+        const win = typeof window !== 'undefined' ? (window as any) : null;
+        if (!win) return;
 
-      if (ctx && ctx.state === 'suspended') {
-        await ctx.resume();
-        console.log('Audio Context Resumed');
-      } else if (!ctx) {
-         // If scheduler doesn't have context exposed, it might be internal.
-         // We trust .start() to handle it.
-        console.log('Audio Context not directly accessible, relying on scheduler.start()');
+        if (typeof win.initStrudel !== 'function') {
+          // Wait briefly for the script tag from index.html to load or dynamically inject
+          await new Promise<void>((resolve) => {
+            if (win.initStrudel) return resolve();
+            
+            const existingScript = document.querySelector('script[src*="@strudel/web"]');
+            if (existingScript) {
+              existingScript.addEventListener('load', () => resolve());
+              existingScript.addEventListener('error', () => resolve());
+              setTimeout(resolve, 1500);
+            } else {
+              const script = document.createElement('script');
+              script.src = 'https://cdn.jsdelivr.net/npm/@strudel/web@1.2.5/dist/index.js';
+              script.onload = () => resolve();
+              script.onerror = () => resolve();
+              document.head.appendChild(script);
+              setTimeout(resolve, 2000);
+            }
+          });
+        }
+
+        if (typeof win.initStrudel === 'function') {
+          try {
+            const initRes = await win.initStrudel({
+              prebake: () => {
+                if (typeof win.samples === 'function') {
+                  try {
+                    win.samples('github:tidalcycles/Dirt-Samples');
+                  } catch (e) {
+                    console.warn('[Strudel] Default samples prebake note:', e);
+                  }
+                }
+              }
+            });
+            if (initRes) {
+              if (typeof initRes.evaluate === 'function') win.evaluate = initRes.evaluate;
+              if (typeof initRes.hush === 'function') win.hush = initRes.hush;
+              if (typeof initRes.samples === 'function') win.samples = initRes.samples;
+            }
+            console.log('[Strudel] initStrudel completed successfully');
+          } catch (initErr) {
+            console.warn('[Strudel] initStrudel call warning:', initErr);
+          }
+        }
+
+        // Initialize and register embedded studio sound bank (zero network dependency)
+        try {
+          await embeddedSoundBank.initializeAndRegister();
+        } catch (embErr) {
+          console.warn('[Strudel] Embedded sound bank init note:', embErr);
+        }
+
+        // Fallback or ensure default sample registration
+        if (typeof win.samples === 'function') {
+          try {
+            win.samples('github:tidalcycles/Dirt-Samples');
+          } catch (e) {
+            // ignore
+          }
+        }
+
+        // Patch getSound if available to intercept numeric arguments like 808 without warning
+        try {
+          if (win.getSound && typeof win.getSound === 'function') {
+            const originalGetSound = win.getSound;
+            win.getSound = function(soundName: any, ...args: any[]) {
+              if (typeof soundName === 'number') {
+                if (soundName === 808) soundName = 'sub808';
+                else if (soundName === 909) soundName = 'kick';
+                else if (soundName === 303) soundName = 'acid';
+                else soundName = String(soundName);
+              }
+              return originalGetSound.call(this, soundName, ...args);
+            };
+          }
+        } catch (e) {}
+
+        this.isInitialized = true;
+      } catch (err) {
+        console.warn('[Strudel] Initialization fallback note:', err);
+      } finally {
+        this.initPromise = null;
       }
+    })();
 
-      // Initialize default samples path if function exists
-      if (typeof Strudel.samples === 'function') {
-         try {
-           await Strudel.samples('https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/strudel.json');
-           console.log('Default samples loaded');
-         } catch (e) {
-           console.warn('Failed to load default samples:', e);
-         }
+    return this.initPromise;
+  }
+
+  private async resumeAudioContext() {
+    try {
+      const win = typeof window !== 'undefined' ? (window as any) : null;
+      if (!win) return;
+
+      const contexts = [
+        win.getAudioContext?.(),
+        win.audioContext,
+        win.SuperDoughAudioContext,
+        win.strudelContext,
+        (StrudelCore as any)?.getAudioContext?.()
+      ];
+
+      for (const ctx of contexts) {
+        if (ctx && typeof ctx.resume === 'function' && ctx.state === 'suspended') {
+          await ctx.resume();
+          console.log('[Strudel] Audio Context resumed:', ctx);
+        }
       }
     } catch (e) {
-      console.error('Failed to initialize audio context:', e);
+      console.warn('[Strudel] AudioContext resume note:', e);
     }
   }
 
   /**
-   * Registers a local sample with the Strudel engine
+   * Registers a sample with the Strudel engine
    */
   public registerSample(name: string, url: string) {
-    const registerFunc = Strudel.register;
-    if (typeof registerFunc === 'function') {
-      try {
-        registerFunc(name, url);
-        console.log(`Registered local sample: ${name}`);
-      } catch (e) {
-        console.error(`Failed to register sample ${name}:`, e);
-      }
-    } else {
-        console.warn('Strudel.register is not available');
-    }
-  }
+    const win = typeof window !== 'undefined' ? (window as any) : null;
+    if (!win) return;
 
-  /**
-   * Registers a bank of samples
-   */
-  public registerBank(name: string, urls: string[]) {
-    if (typeof Strudel.samples === 'function') {
-      try {
-        Strudel.samples({ [name]: urls });
-        console.log(`Registered bank: ${name} with ${urls.length} samples`);
-      } catch (e) {
-        console.error(`Failed to register bank ${name}:`, e);
-      }
-    }
-  }
-
-  /**
-   * Validates pattern using Strudel transpiler
-   */
-  public validatePattern(code: string): { isValid: boolean; error?: StrudelError } {
     try {
-      // Use transpiler for proper Strudel syntax validation
-      const transpiledResult = transpiler(code);
-      const transpiledCode = transpiledResult.output;
-
-      // Remove the 'return ' prefix if present
-      let evalCode = transpiledCode;
-      if (evalCode.startsWith('return ')) {
-        evalCode = evalCode.substring(7);
+      if (typeof win.register === 'function') {
+        win.register(name, url);
+        console.log(`[Strudel] Registered sample via register(): ${name}`);
+      } else if (typeof win.samples === 'function') {
+        win.samples({ [name]: url });
+        console.log(`[Strudel] Registered sample via samples(): ${name}`);
       }
+    } catch (e) {
+      console.warn(`[Strudel] Failed to register sample ${name}:`, e);
+    }
+  }
 
-      // Evaluate the transpiled code in a function context
-      // @ts-ignore
-      const result = window.eval(`(function() { return ${evalCode} })()`);
-      if (!result) throw new Error("No pattern returned");
+  /**
+   * Sanitizes Strudel mini-notation to ensure sound names are string identifiers
+   */
+  public sanitizeCode(code: string): string {
+    if (!code) return code;
+    return code.replace(/(s(?:ound)?\s*\(\s*["'])([^"']+)(["']\s*\))/g, (match, prefix, content, suffix) => {
+      const sanitizedContent = content
+        .replace(/\b808\b/g, 'sub808')
+        .replace(/\b909\b/g, 'kick')
+        .replace(/\b303\b/g, 'acid');
+      return `${prefix}${sanitizedContent}${suffix}`;
+    });
+  }
+
+  /**
+   * Validates pattern by attempting to parse/evaluate
+   */
+  public validatePattern(rawCode: string): { isValid: boolean; error?: StrudelError } {
+    if (!rawCode || !rawCode.trim()) {
+      return { isValid: false, error: { message: 'Pattern code cannot be empty', line: 1 } };
+    }
+
+    const code = this.sanitizeCode(rawCode);
+
+    try {
+      const win = typeof window !== 'undefined' ? (window as any) : null;
+      if (!win) return { isValid: true };
+
+      // Test evaluation without playing
+      if (typeof win.evaluate === 'function') {
+        const res = win.eval(code);
+        if (!res && res !== 0) {
+          // Check if eval worked
+        }
+      } else {
+        const res = win.eval(code);
+        if (!res && res !== 0) {
+          throw new Error('Pattern returned undefined');
+        }
+      }
 
       return { isValid: true };
     } catch (e: any) {
       return {
         isValid: false,
         error: {
-          message: e.message || 'Syntax Error',
-          line: e.line || 1,
-          column: e.column
+          message: e.message || 'Syntax Error in pattern code',
+          line: 1
         }
       };
     }
   }
 
   public async play() {
-    await this.initAudio();
-    
-    if (this.scheduler) {
-        this.scheduler.start();
-        this.isPlaying = true;
-        this.startCyclePolling();
-        console.log('Strudel: Play');
-    } else {
-        console.error('Strudel Scheduler not found. Engine might not be loaded.');
+    await this.init();
+    await this.resumeAudioContext();
+
+    this.isPlaying = true;
+    this.playStartTime = performance.now();
+
+    if (this.currentCode) {
+      this.executePattern(this.currentCode);
     }
+
+    this.startCyclePolling();
+    console.log('[Strudel] Playing pattern');
   }
 
   public stop() {
-    if (this.scheduler) {
-        this.scheduler.stop();
-        this.isPlaying = false;
-        this.stopCyclePolling();
-        console.log('Strudel: Stop');
+    this.isPlaying = false;
+    this.stopCyclePolling();
+
+    const win = typeof window !== 'undefined' ? (window as any) : null;
+    if (win) {
+      // 1. Strudel hush()
+      if (typeof win.hush === 'function') {
+        try {
+          win.hush();
+        } catch (e) {
+          console.warn('[Strudel] hush error:', e);
+        }
+      }
+
+      // 2. Strudel evaluate('silence')
+      if (typeof win.evaluate === 'function') {
+        try {
+          win.evaluate('silence');
+        } catch (e) {}
+      }
+
+      // 3. Strudel core hush
+      if (typeof (StrudelCore as any).hush === 'function') {
+        try {
+          (StrudelCore as any).hush();
+        } catch (e) {}
+      }
+
+      // 4. Direct pattern player instance stop
+      if (this.activePlayer) {
+        try {
+          if (typeof this.activePlayer.stop === 'function') this.activePlayer.stop();
+          if (typeof this.activePlayer.hush === 'function') this.activePlayer.hush();
+        } catch (e) {}
+        this.activePlayer = null;
+      }
+
+      // 5. Explicitly clear audioContext active sound nodes if suspended/muted
+      try {
+        const audioCtx = win.getAudioContext?.() || win.audioContext;
+        if (audioCtx && typeof audioCtx.suspend === 'function') {
+          audioCtx.suspend().then(() => {
+            if (this.isPlaying) {
+              audioCtx.resume();
+            }
+          }).catch(() => {});
+        }
+      } catch (e) {}
     }
+
+    console.log('[Strudel] Stopped playback');
   }
 
   public setPattern(code: string) {
     this.currentCode = code;
-    console.log(`Strudel: Setting pattern: ${code}`);
+
+    if (this.isPlaying) {
+      this.executePattern(code);
+    }
+  }
+
+  private executePattern(rawCode: string) {
+    if (!rawCode || !rawCode.trim() || !this.isPlaying) return;
+
+    const code = this.sanitizeCode(rawCode);
 
     try {
-        const evalFunc = Strudel.evaluate;
+      const win = typeof window !== 'undefined' ? (window as any) : null;
+      if (!win) return;
 
-        // Transpile the code first
-        console.log('Transpiling code...');
-        const transpiledResult = transpiler(code);
-        let transpiledCode = transpiledResult.output;
-        console.log('Transpiled code:', transpiledCode);
+      let evaluatedResult: any = null;
+      let usedEvaluateFn = false;
 
-        // Remove the 'return ' prefix and trailing ';' if present
-        if (transpiledCode.startsWith('return ')) {
-          transpiledCode = transpiledCode.substring(7);
+      // Method 1: Use Strudel Web's evaluate(code) for seamless live hot-swapping
+      if (typeof win.evaluate === 'function') {
+        try {
+          evaluatedResult = win.evaluate(code);
+          usedEvaluateFn = true;
+          console.log('[Strudel] Pattern evaluated into engine via evaluate()');
+        } catch (evalFnErr) {
+          console.warn('[Strudel] evaluate() warning, falling back to eval():', evalFnErr);
         }
-        if (transpiledCode.endsWith(';')) {
-          transpiledCode = transpiledCode.slice(0, -1);
-        }
+      }
 
-        // Evaluate the transpiled code
-        console.log('Evaluating transpiled code...');
-        // @ts-ignore
-        const pattern = window.eval(`(function() { return ${transpiledCode} })()`);
-        console.log('Pattern evaluated:', pattern);
-        if (this.scheduler && pattern) {
-          console.log('Setting pattern on scheduler...');
-          this.scheduler.setPattern(pattern);
-          console.log('Pattern set successfully');
-        } else {
-          console.error('Scheduler or pattern missing:', { scheduler: !!this.scheduler, pattern: !!pattern });
+      // Method 2: If evaluate didn't return or failed, eval directly
+      if (!evaluatedResult) {
+        try {
+          evaluatedResult = win.eval(code);
+        } catch (e) {
+          console.warn('[Strudel] win.eval error (keeping current pattern):', e);
+          return;
         }
+      }
+
+      // Stop previous direct standalone player if one was manually started
+      if (!usedEvaluateFn && this.activePlayer) {
+        try {
+          if (typeof this.activePlayer.stop === 'function') this.activePlayer.stop();
+          if (typeof this.activePlayer.hush === 'function') this.activePlayer.hush();
+        } catch (e) {}
+        this.activePlayer = null;
+      }
+
+      // If standalone eval produced a Pattern without global evaluate(), start .play()
+      if (!usedEvaluateFn && evaluatedResult && typeof evaluatedResult.play === 'function') {
+        this.activePlayer = evaluatedResult.play();
+        console.log('[Strudel] Pattern .play() started standalone');
+      } else if (evaluatedResult && typeof evaluatedResult.stop === 'function') {
+        this.activePlayer = evaluatedResult;
+      }
     } catch (e) {
-        console.error("Failed to set pattern:", e);
-        console.error("Error details:", { message: e.message, stack: e.stack });
+      console.error('[Strudel] Pattern execution error:', e);
     }
   }
 
@@ -239,69 +372,30 @@ class StrudelService {
   }
 
   public setCPS(cps: number) {
-    if (Strudel.controls && typeof Strudel.controls.setCps === 'function') {
-        Strudel.controls.setCps(cps);
-    } else if (this.scheduler && typeof this.scheduler.setCps === 'function') {
-        this.scheduler.setCps(cps);
+    this.cps = cps;
+    const win = typeof window !== 'undefined' ? (window as any) : null;
+    if (!win) return;
+
+    try {
+      if (typeof win.setCps === 'function') {
+        win.setCps(cps);
+      } else if (typeof win.setcpm === 'function') {
+        win.setcpm(cps * 60);
+      }
+    } catch (e) {
+      console.warn('[Strudel] setCPS error:', e);
     }
   }
 
-  public getIsPlaying() {
+  public getCPS(): number {
+    return this.cps;
+  }
+
+  public getIsPlaying(): boolean {
     return this.isPlaying;
   }
 
-  /**
-   * Plays a pattern once (audition)
-   */
-  public async playOnce(code: string) {
-    if (!this.scheduler) return;
-    
-    try {
-        // Ensure audio context is resumed
-        const ctx = this.scheduler.audioContext || this.scheduler.context;
-        if (ctx && ctx.state === 'suspended') {
-            await ctx.resume();
-        }
-
-        const transpiledResult = transpiler(code);
-        let transpiledCode = transpiledResult.output;
-        if (transpiledCode.startsWith('return ')) {
-          transpiledCode = transpiledCode.substring(7);
-        }
-        // @ts-ignore
-        const pattern = window.eval(`(function() { return ${transpiledCode} })()`);
-        
-        if (!pattern) return;
-
-        console.log(`Auditioning: ${code}`);
-
-        // Use the scheduler to play the pattern once
-        const originalPattern = this.scheduler.pattern;
-        
-        // We use a short duration pattern
-        this.scheduler.setPattern(pattern.take(1));
-        
-        if (!this.isPlaying) {
-            this.scheduler.start();
-            setTimeout(() => {
-                if (!this.isPlaying) {
-                    this.scheduler.stop();
-                } else {
-                    this.scheduler.setPattern(originalPattern);
-                }
-            }, 2000);
-        } else {
-            // If already playing, we temporarily swap the pattern
-            setTimeout(() => {
-                this.scheduler.setPattern(originalPattern);
-            }, 2000);
-        }
-    } catch (e) {
-        console.error("Audition failed:", e);
-    }
-  }
-
-  // --- CYCLE POLLING FOR JAM BUDDY ---
+  // --- REAL-TIME CYCLE & PLAYHEAD POLLING ---
 
   public onCycle(callback: CycleCallback) {
     this.cycleCallbacks.add(callback);
@@ -310,37 +404,79 @@ class StrudelService {
 
   private startCyclePolling() {
     if (this.pollInterval) return;
-    
-    // We poll rapidly to catch cycle changes roughly on time
-    // using requestAnimationFrame would be ideal for UI syncing
+
     const loop = () => {
-        if (!this.isPlaying) return;
-        
-        try {
-            // Attempt to get cycle from window or scheduler
-            // @ts-ignore
-            if (typeof window.getCycle === 'function') {
-                 // @ts-ignore
-                 const c = window.getCycle();
-                 this.notifyCycle(c);
-            }
-        } catch (e) {
-            // suppress errors during polling
+      if (!this.isPlaying) return;
+
+      try {
+        const win = typeof window !== 'undefined' ? (window as any) : null;
+        let cycle = 0;
+
+        if (win && typeof win.getCycle === 'function') {
+          cycle = win.getCycle();
+        } else {
+          // Fallback cycle calculation: elapsed time * cps
+          const elapsedSec = (performance.now() - this.playStartTime) / 1000;
+          cycle = elapsedSec * this.cps;
         }
-        this.pollInterval = requestAnimationFrame(loop);
+
+        if (typeof cycle === 'number' && !isNaN(cycle)) {
+          const phase = ((cycle % 1) + 1) % 1; // 0.000 to 0.999
+          const beat = Math.floor(phase * 4) + 1; // 1, 2, 3, 4
+          const step16 = Math.floor(phase * 16); // 0 to 15
+          const step8 = Math.floor(phase * 8); // 0 to 7
+          const bpm = Math.round(this.cps * 60 * 4); // or cps * 120
+
+          const info: CycleInfo = {
+            cycle: Number(cycle.toFixed(2)),
+            phase,
+            beat,
+            step16,
+            step8,
+            cps: this.cps,
+            bpm: Math.round(this.cps * 240), // 0.5 cps = 120 bpm
+            isPlaying: this.isPlaying
+          };
+
+          this.notifyCycle(info);
+        }
+      } catch (e) {
+        // suppress polling errors
+      }
+
+      this.pollInterval = requestAnimationFrame(loop);
     };
+
     this.pollInterval = requestAnimationFrame(loop);
   }
 
   private stopCyclePolling() {
     if (this.pollInterval) {
-        cancelAnimationFrame(this.pollInterval);
-        this.pollInterval = null;
+      cancelAnimationFrame(this.pollInterval);
+      this.pollInterval = null;
     }
+
+    const idleInfo: CycleInfo = {
+      cycle: 0,
+      phase: 0,
+      beat: 1,
+      step16: 0,
+      step8: 0,
+      cps: this.cps,
+      bpm: Math.round(this.cps * 240),
+      isPlaying: false
+    };
+    this.notifyCycle(idleInfo);
   }
 
-  private notifyCycle(cycle: number) {
-    this.cycleCallbacks.forEach(cb => cb(cycle));
+  private notifyCycle(info: CycleInfo) {
+    this.cycleCallbacks.forEach((cb) => {
+      try {
+        cb(info);
+      } catch (err) {
+        console.error('[Strudel] Cycle callback error:', err);
+      }
+    });
   }
 }
 

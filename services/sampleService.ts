@@ -1,12 +1,12 @@
 import { strudelService } from './strudelService';
-import { Sample, SampleBank, FileSystemDirectoryHandle, FileSystemHandle, FileSystemFileHandle, SampleAssignment } from '../types';
+import { Sample, SampleBank, FileSystemDirectoryHandle, FileSystemHandle, FileSystemFileHandle } from '../types';
 import Dexie, { Table } from 'dexie';
 
 // --- Database Schema ---
 interface SampleRecord {
   id?: number;
-  name: string; // "bd:001"
-  bank: string; // "bd"
+  name: string; // "bd/001" or "my_sample"
+  bank: string; // "bd" or "local"
   data: Blob;
 }
 
@@ -15,7 +15,6 @@ class StrudelSamplesDB extends Dexie {
 
   constructor() {
     super('StrudelSamplesDB');
-    // Cast to any to bypass TS error regarding version method visibility
     (this as any).version(1).stores({
       samples: '++id, name, bank'
     });
@@ -24,20 +23,55 @@ class StrudelSamplesDB extends Dexie {
 
 const db = new StrudelSamplesDB();
 
+/**
+ * Retrieve stored blob for a sample name or bank from IndexedDB
+ */
+export async function getStoredSampleBlob(nameOrBank: string): Promise<Blob | null> {
+  try {
+    const direct = await db.samples.where('name').equals(nameOrBank).first();
+    if (direct?.data) return direct.data;
+
+    const bankMatch = await db.samples.where('bank').equals(nameOrBank).first();
+    if (bankMatch?.data) return bankMatch.data;
+  } catch (e) {
+    console.warn('[sampleService] getStoredSampleBlob error:', e);
+  }
+  return null;
+}
+
+// Fallback list of standard Dirt-Samples banks from TidalCycles
+const DEFAULT_DIRT_BANKS: string[] = [
+  '808', '808bd', '808cy', '808hc', '808ht', '808lc', '808lt', '808mc', '808mt', '808oh', '808sd',
+  '909', 'ab', 'ade', 'alex', 'alphabet', 'amencparam', 'armora', 'arp', 'arpy', 'auto',
+  'bass', 'bass0', 'bass1', 'bass2', 'bass3', 'bassdm', 'bassfoo', 'battles', 'bd', 'bend',
+  'bev', 'bin', 'birds', 'birds3', 'bleep', 'blip', 'blue', 'bottle', 'breaks125', 'breaks152',
+  'breaks157', 'breaks165', 'can', 'casio', 'cb', 'cc', 'chin', 'clak', 'click', 'clubkick',
+  'co', 'control', 'cosmicg', 'cp', 'cr', 'crow', 'd', 'db', 'diphone', 'diphone2',
+  'dist', 'dork2', 'dorkbot', 'dr', 'dr2', 'dr55', 'dr_step', 'dras', 'drum', 'east',
+  'electro1', 'f', 'feel', 'feelfx', 'fest', 'fire', 'flbass', 'fm', 'foo', 'future',
+  'gab', 'gabba', 'gabbalouder', 'gabbaloud', 'glitch', 'glitch2', 'gretsch', 'h', 'hand', 'hardcore',
+  'hardkick', 'haw', 'hc', 'heavy', 'hh', 'hh27', 'hit', 'hmm', 'ho', 'hoover',
+  'house', 'ht', 'ice', 'incoming', 'industrial', 'insect', 'invaders', 'jazz', 'jungbass', 'jungle',
+  'juno', 'jvbass', 'kicklinn', 'koy', 'kurt', 'latibro', 'led', 'less', 'lighter', 'linn',
+  'linnhats', 'lt', 'made', 'mash', 'mash2', 'metal', 'miniplot', 'moog', 'mouth', 'mp3',
+  'msg', 'mt', 'mute', 'newnotes', 'noise', 'noise2', 'notes', 'numbers', 'oc', 'odx',
+  'off', 'outdoor', 'pad', 'padlong', 'pebbles', 'perc', 'peri', 'pluck', 'print', 'proc',
+  'psr', 'rave', 'rave2', 'ravemono', 'rm', 'sax', 'scifi', 'sd', 'sequential', 'sf',
+  'sheffield', 'short', 'sid', 'sine', 'sitar', 'sn', 'space', 'speakspell', 'speech', 'speechless',
+  'speedgate', 'stomp', 'subroc3d', 'sugar', 'sundance', 'tabla', 'tabla2', 'tablex', 'tacscan', 'tech',
+  'techno', 'tink', 'tok', 'toys', 'trump', 'ul', 'ulgab', 'umbrella', 'v', 'voodoo',
+  'wind', 'wobble', 'world', 'wort', 'xmas', 'yeah'
+];
+
 // --- Service ---
 class SampleService {
   private samples: Map<string, Sample> = new Map();
-  private isSupported: boolean;
+  private isSupported: boolean = true;
   private banksCache: SampleBank[] = [];
-  private sampleMap: Record<string, string> = {};
-  private assignments: SampleAssignment[] = [];
 
   constructor() {
-    this.isSupported = 'showDirectoryPicker' in window;
     this.initOfflineSamples();
   }
-
-  // --- Initialization ---
 
   /**
    * Load all samples stored in IndexedDB and register them with Strudel
@@ -45,34 +79,25 @@ class SampleService {
   private async initOfflineSamples() {
     try {
       const records = await db.samples.toArray();
-      console.log(`[SampleService] Loading ${records.length} offline samples from DB...`);
+      console.log(`[SampleService] Loading ${records.length} stored samples from IndexedDB...`);
       
-      const banks: Record<string, string[]> = {};
-
       for (const record of records) {
         const url = URL.createObjectURL(record.data);
+        strudelService.registerSample(record.name, url);
         
-        if (!banks[record.bank]) banks[record.bank] = [];
-        banks[record.bank].push(url);
-
         this.samples.set(record.name, {
           name: record.name,
           path: url,
-          source: 'offline',
+          source: record.bank === 'local' ? 'local' : 'offline',
           bank: record.bank
         });
-      }
-
-      for (const bankName in banks) {
-          console.log(`[SampleService] Registering bank: ${bankName} with ${banks[bankName].length} samples`);
-          strudelService.registerBank(bankName, banks[bankName]);
       }
     } catch (e) {
       console.error('[SampleService] Failed to load offline samples:', e);
     }
   }
 
-  public getIsSupported() {
+  public getIsSupported(): boolean {
     return this.isSupported;
   }
 
@@ -81,104 +106,161 @@ class SampleService {
   }
 
   /**
-   * Returns a string representation of available kits and banks for AI prompting
+   * Process and register audio files (from input, drag/drop, or directory scans)
    */
-  public getSampleSchema(): string {
-    if (this.assignments.length > 0) {
-        let schema = "SELECTED DRUM SAMPLES (Use these for beats):\n";
-        this.assignments.forEach(a => {
-            schema += `- Type "${a.type}": Use s("${a.sampleName}") [from kit ${a.kitName}]\n`;
-        });
-        return schema;
+  public async loadFiles(files: File[] | FileList): Promise<number> {
+    const fileList = Array.from(files);
+    const audioFiles = fileList.filter(file => {
+      const lower = file.name.toLowerCase();
+      return (
+        lower.endsWith('.wav') ||
+        lower.endsWith('.mp3') ||
+        lower.endsWith('.ogg') ||
+        lower.endsWith('.flac') ||
+        lower.endsWith('.aif') ||
+        lower.endsWith('.aiff') ||
+        lower.endsWith('.m4a') ||
+        lower.endsWith('.webm')
+      );
+    });
+
+    if (audioFiles.length === 0) {
+      throw new Error('No audio files (.wav, .mp3, .ogg, .flac) found in selection.');
     }
 
-    const loadedSamples = this.getLoadedSamples();
-    const kits: Record<string, Set<string>> = {};
-    
-    loadedSamples.forEach(s => {
-      if (s.name.includes(':')) {
-        const parts = s.name.split(':');
-        if (parts.length >= 2) {
-          const kit = parts[0];
-          const bank = parts.slice(1, parts.length - 1).join(':');
-          if (bank) {
-            if (!kits[kit]) kits[kit] = new Set();
-            kits[kit].add(bank);
+    let loadedCount = 0;
+
+    for (const file of audioFiles) {
+      // Determine sample name
+      const relativePath = (file as any).webkitRelativePath || '';
+      let registryName = '';
+
+      if (relativePath) {
+        // Strip leading folder if any, or normalize path without extension
+        const parts = relativePath.split('/');
+        // e.g. "mykit/drums/snare.wav" -> "drums/snare" or "mykit/drums/snare"
+        const cleanName = relativePath.replace(/\.[^/.]+$/, '');
+        registryName = cleanName.replace(/^[./]+/, '');
+      } else {
+        registryName = file.name.replace(/\.[^/.]+$/, '');
+      }
+
+      // Clean registry name for Strudel compatibility (lowercase, alpha-numeric, slashes, underscores)
+      registryName = registryName.trim().replace(/\s+/g, '_');
+
+      const url = URL.createObjectURL(file);
+
+      // Store in IndexedDB for persistence
+      try {
+        await db.samples.put({
+          name: registryName,
+          bank: 'local',
+          data: file
+        });
+      } catch (dbErr) {
+        console.warn(`[SampleService] DB put warning for ${registryName}:`, dbErr);
+      }
+
+      // Register live in Strudel audio engine
+      strudelService.registerSample(registryName, url);
+
+      this.samples.set(registryName, {
+        name: registryName,
+        path: url,
+        source: 'local',
+        bank: 'local'
+      });
+
+      loadedCount++;
+    }
+
+    return loadedCount;
+  }
+
+  /**
+   * Recursively extract Files from DataTransferItemList (drag-and-drop folder support)
+   */
+  public async loadFromDataTransfer(items: DataTransferItemList | DataTransfer): Promise<number> {
+    const files: File[] = [];
+
+    // Helper to read FileSystemEntry recursively
+    const traverseEntry = async (entry: any, path = ''): Promise<void> => {
+      if (!entry) return;
+      if (entry.isFile) {
+        return new Promise<void>((resolve) => {
+          entry.file((file: File) => {
+            // Set custom property for relative path
+            Object.defineProperty(file, 'webkitRelativePath', {
+              value: path ? `${path}/${file.name}` : file.name,
+              writable: false
+            });
+            files.push(file);
+            resolve();
+          }, () => resolve());
+        });
+      } else if (entry.isDirectory) {
+        const dirReader = entry.createReader();
+        const readEntries = async (): Promise<any[]> => {
+          return new Promise((resolve) => {
+            dirReader.readEntries((entries: any[]) => resolve(entries), () => resolve([]));
+          });
+        };
+
+        let entries: any[] = await readEntries();
+        while (entries.length > 0) {
+          for (const child of entries) {
+            await traverseEntry(child, path ? `${path}/${entry.name}` : entry.name);
           }
+          entries = await readEntries();
         }
       }
-    });
+    };
 
-    if (Object.keys(kits).length === 0) return "";
-
-    let schema = "AVAILABLE CUSTOM KITS AND BANKS:\n";
-    Object.keys(kits).sort().forEach(kit => {
-      schema += `- Kit "${kit}": Use s("${kit}:bankname") where bankname is one of: ${Array.from(kits[kit]).sort().join(', ')}\n`;
-    });
-    schema += "Example: s(\"AkaiXR10:akaixr10-bd\")\n";
-    
-    return schema;
-  }
-
-  public async auditionSample(sampleName: string) {
-      const parts = sampleName.split(':');
-      const index = parts.pop();
-      const bankName = parts.join(':');
-
-      // If not already loaded/registered, try to register the bank from sampleMap
-      const isLoaded = this.samples.has(sampleName);
-      if (!isLoaded) {
-          const bankUrls: string[] = [];
-          let i = 0;
-          while (true) {
-              const name = `${bankName}:${i}`;
-              const url = this.sampleMap[name];
-              if (url) {
-                  bankUrls.push(url);
-                  i++;
-              } else {
-                  break;
-              }
+    if ('items' in items && items.items) {
+      const itemList = Array.from(items.items);
+      for (const item of itemList) {
+        if (typeof item.webkitGetAsEntry === 'function') {
+          const entry = item.webkitGetAsEntry();
+          if (entry) {
+            await traverseEntry(entry);
+            continue;
           }
-          if (bankUrls.length > 0) {
-              console.log(`[SampleService] Registering online bank for audition: ${bankName}`);
-              strudelService.registerBank(bankName, bankUrls);
-          }
+        }
+        const file = item.getAsFile();
+        if (file) files.push(file);
       }
-      
-      console.log(`[SampleService] Auditioning: s("${bankName}", ${index})`);
-      strudelService.playOnce(`s("${bankName}", ${index})`);
-  }
-
-  public getAssignments(): SampleAssignment[] {
-      return this.assignments;
-  }
-
-  public assignSample(assignment: SampleAssignment) {
-      // Remove existing assignment for this type if it exists
-      this.assignments = this.assignments.filter(a => a.type !== assignment.type);
-      this.assignments.push(assignment);
-  }
-
-  public removeAssignment(type: string) {
-      this.assignments = this.assignments.filter(a => a.type !== type);
-  }
-
-  // --- Local File System (Phase 2 Part A) ---
-
-  public async linkLocalFolder(): Promise<number> {
-    if (!this.isSupported) {
-      throw new Error('File System Access API not supported in this browser.');
+    } else if ('files' in items && items.files) {
+      files.push(...Array.from(items.files));
     }
 
-    try {
-      // @ts-ignore
-      const dirHandle = await window.showDirectoryPicker();
-      await this.scanDirectory(dirHandle, '');
-      return this.samples.size;
-    } catch (err: any) {
-      if (err.name === 'AbortError') return 0;
-      throw err;
+    return this.loadFiles(files);
+  }
+
+  /**
+   * Load audio files from a DirectoryHandle (File System Access API)
+   */
+  public async loadFromDirectoryHandle(dirHandle: FileSystemDirectoryHandle): Promise<number> {
+    const beforeCount = this.samples.size;
+    await this.scanDirectory(dirHandle, '');
+    return this.samples.size - beforeCount;
+  }
+
+  /**
+   * Graceful Link Local Folder (handles showDirectoryPicker and fallbacks)
+   */
+  public async linkLocalFolder(): Promise<number> {
+    if (typeof window !== 'undefined' && 'showDirectoryPicker' in window) {
+      try {
+        // @ts-ignore
+        const dirHandle = await window.showDirectoryPicker();
+        return await this.loadFromDirectoryHandle(dirHandle);
+      } catch (err: any) {
+        if (err.name === 'AbortError') return 0;
+        // If security error in iframe, rethrow so UI can trigger fallback input seamlessly
+        throw err;
+      }
+    } else {
+      throw new Error('showDirectoryPicker_unsupported');
     }
   }
 
@@ -200,12 +282,24 @@ class SampleService {
     const name = file.name;
     const lowerName = name.toLowerCase();
 
-    if (lowerName.endsWith('.wav') || lowerName.endsWith('.mp3') || lowerName.endsWith('.ogg')) {
+    if (
+      lowerName.endsWith('.wav') ||
+      lowerName.endsWith('.mp3') ||
+      lowerName.endsWith('.ogg') ||
+      lowerName.endsWith('.flac')
+    ) {
       const url = URL.createObjectURL(file);
-      const baseName = name.replace(/\.[^/.]+$/, "");
-      let registryName = baseName;
-      if (pathPrefix) {
-        registryName = `${pathPrefix}:${baseName}`;
+      const baseName = name.replace(/\.[^/.]+$/, '');
+      const registryName = pathPrefix ? `${pathPrefix}/${baseName}` : baseName;
+
+      try {
+        await db.samples.put({
+          name: registryName,
+          bank: 'local',
+          data: file
+        });
+      } catch (e) {
+        // ignore
       }
 
       strudelService.registerSample(registryName, url);
@@ -213,173 +307,195 @@ class SampleService {
       this.samples.set(registryName, {
         name: registryName,
         path: url,
-        source: 'local'
+        source: 'local',
+        bank: 'local'
       });
     }
   }
 
-  // --- GitHub / Cloud Samples (Phase 2 Part B) ---
+  /**
+   * Deletes a local custom sample
+   */
+  public async deleteLocalSample(name: string): Promise<void> {
+    try {
+      await db.samples.where('name').equals(name).delete();
+      this.samples.delete(name);
+    } catch (e) {
+      console.error('[SampleService] Error deleting sample:', e);
+    }
+  }
 
   /**
-    * Fetches list of sample kits from GitHub API for geikha/tidal-drum-machines
-    */
+   * Clear all user-uploaded local samples
+   */
+  public async clearAllLocalSamples(): Promise<void> {
+    try {
+      await db.samples.where('bank').equals('local').delete();
+      for (const [key, sample] of this.samples.entries()) {
+        if (sample.source === 'local') {
+          this.samples.delete(key);
+        }
+      }
+    } catch (e) {
+      console.error('[SampleService] Error clearing local samples:', e);
+    }
+  }
+
+  public async clearAllCustomSamples(): Promise<void> {
+    return this.clearAllLocalSamples();
+  }
+
+  // --- GitHub / Cloud Samples ---
+
+  /**
+   * Fetches list of sample banks from tidalcycles/Dirt-Samples or fallback catalogue
+   */
   public async fetchGithubBanks(): Promise<SampleBank[]> {
     if (this.banksCache.length > 0) return this.banksCache;
 
+    const offlineBanks = await this.getOfflineBanks();
+
     try {
-      // Fetch the tree from GitHub API
-      const response = await fetch('https://api.github.com/repos/geikha/tidal-drum-machines/git/trees/main?recursive=1');
-      if (!response.ok) throw new Error('Failed to fetch repository tree');
+      const response = await fetch('https://api.github.com/repos/tidalcycles/Dirt-Samples/contents/');
+      if (response.ok) {
+        const items = await response.json();
+        const banks: SampleBank[] = items
+          .filter((item: any) => item.type === 'dir' && !item.name.startsWith('.'))
+          .map((item: any) => ({
+            name: item.name,
+            url: item.url,
+            sampleCount: 0,
+            isOffline: offlineBanks.has(item.name)
+          }));
 
-      const data = await response.json();
-      const tree = data.tree;
+        if (banks.length > 0) {
+          this.banksCache = banks;
+          return banks;
+        }
+      }
+    } catch (e) {
+      console.warn('[SampleService] GitHub API unavailable/rate-limited. Using curated bank catalogue.');
+    }
 
-      // Build sample map
-      const newSampleMap: Record<string, string> = {};
-      const kitInfo: Record<string, { count: number, banks: Set<string>, bankSamples: Record<string, string[]> }> = {};
-      const bankCounts: Record<string, number> = {}; // key: "kit:bank"
+    // Fallback to built-in Dirt-Samples bank catalogue
+    const fallbackBanks: SampleBank[] = DEFAULT_DIRT_BANKS.map((bankName) => ({
+      name: bankName,
+      url: `https://api.github.com/repos/tidalcycles/Dirt-Samples/contents/${bankName}`,
+      sampleCount: 0,
+      isOffline: offlineBanks.has(bankName)
+    }));
 
-      for (const item of tree) {
-        if (item.type === 'blob' && item.path.startsWith('machines/') && (item.path.endsWith('.wav') || item.path.endsWith('.mp3'))) {
-          const parts = item.path.split('/');
-          if (parts.length >= 3) {
-            const kitName = parts[1];
-            // All parts between kitName and the last part (filename)
-            const bankParts = parts.slice(2, parts.length - 1);
-            const bankName = bankParts.length > 0 ? bankParts.join(':') : parts[parts.length - 1].replace(/\.[^/.]+$/, "");
-            const fileName = parts[parts.length - 1];
-            
-            if (!kitInfo[kitName]) {
-              kitInfo[kitName] = { count: 0, banks: new Set(), bankSamples: {} };
-            }
-            kitInfo[kitName].count++;
-            kitInfo[kitName].banks.add(bankName);
-            if (!kitInfo[kitName].bankSamples[bankName]) {
-                kitInfo[kitName].bankSamples[bankName] = [];
-            }
-            kitInfo[kitName].bankSamples[bankName].push(fileName);
+    this.banksCache = fallbackBanks;
+    return fallbackBanks;
+  }
 
-            const bankKey = `${kitName}:${bankName}`;
-            const index = bankCounts[bankKey] || 0;
-            const sampleName = `${kitName}:${bankName}:${index}`;
-            const rawUrl = `https://raw.githubusercontent.com/geikha/tidal-drum-machines/main/${item.path}`;
-            
-            newSampleMap[sampleName] = rawUrl;
-            bankCounts[bankKey] = index + 1;
-          }
+  /**
+   * Download all samples in a bank and store in IndexedDB
+   */
+  public async downloadBank(bankOrName: SampleBank | string, onProgress?: (percent: number) => void): Promise<void> {
+    const bankName = typeof bankOrName === 'string' ? bankOrName : bankOrName.name;
+    const bankUrl = typeof bankOrName === 'string'
+      ? `https://api.github.com/repos/tidalcycles/Dirt-Samples/contents/${bankOrName}`
+      : bankOrName.url;
+
+    try {
+      let audioFiles: { name: string; download_url: string }[] = [];
+
+      try {
+        const response = await fetch(bankUrl);
+        if (response.ok) {
+          const files = await response.json();
+          audioFiles = files.filter((f: any) =>
+            f.name.endsWith('.wav') || f.name.endsWith('.mp3') || f.name.endsWith('.ogg')
+          );
+        }
+      } catch (err) {
+        // Fallback: try raw repository file numbering 000.wav - 010.wav
+      }
+
+      // If GitHub contents API failed (e.g. rate limit), attempt raw GitHub URLs
+      if (audioFiles.length === 0) {
+        const sampleNumbers = ['000', '001', '002', '003', '004', '005', '006', '007', '008', '009', '010'];
+        for (const num of sampleNumbers) {
+          const rawUrl = `https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/${bankName}/${num}.wav`;
+          audioFiles.push({ name: `${num}.wav`, download_url: rawUrl });
         }
       }
 
-      this.sampleMap = newSampleMap;
+      let completed = 0;
+      let successfullySaved = 0;
 
-      // Get list of kits currently in DB to mark 'isOffline'
-      // A kit is offline if all its samples are present. 
-      // For simplicity, we'll check if any sample from the kit is present.
-      const offlineBanks = await this.getOfflineBanks();
+      const CHUNK_SIZE = 4;
+      for (let i = 0; i < audioFiles.length; i += CHUNK_SIZE) {
+        const chunk = audioFiles.slice(i, i + CHUNK_SIZE);
+        await Promise.all(
+          chunk.map(async (file: any) => {
+            try {
+              const rawUrl = file.download_url;
+              const blobResp = await fetch(rawUrl);
+              if (!blobResp.ok) return;
 
-      const kits: SampleBank[] = Object.keys(kitInfo)
-        .map(kitName => ({
-          name: kitName,
-          url: '', 
-          sampleCount: kitInfo[kitName].count,
-          isOffline: Array.from(kitInfo[kitName].banks).some(b => offlineBanks.has(`${kitName}:${b}`)),
-          isKit: true,
-          banks: Array.from(kitInfo[kitName].banks),
-          bankSamples: kitInfo[kitName].bankSamples
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name));
+              const blob = await blobResp.blob();
+              if (blob.size < 100) return; // Not a valid audio file
 
-      this.banksCache = kits;
-      return kits;
+              const baseName = file.name.replace(/\.[^/.]+$/, '');
+              const registryName = `${bankName}/${baseName}`;
+
+              await db.samples.put({
+                name: registryName,
+                bank: bankName,
+                data: blob
+              });
+
+              const objUrl = URL.createObjectURL(blob);
+              strudelService.registerSample(registryName, objUrl);
+
+              this.samples.set(registryName, {
+                name: registryName,
+                path: objUrl,
+                source: 'offline',
+                bank: bankName
+              });
+
+              successfullySaved++;
+            } catch (err) {
+              // Ignore individual sample fetch fail
+            }
+          })
+        );
+
+        completed += chunk.length;
+        if (onProgress) onProgress(Math.round((completed / audioFiles.length) * 100));
+      }
+
+      if (successfullySaved === 0) {
+        throw new Error(`Could not fetch audio files for bank ${bankName}`);
+      }
+
+      const bankIndex = this.banksCache.findIndex(b => b.name === bankName);
+      if (bankIndex !== -1) this.banksCache[bankIndex].isOffline = true;
     } catch (e) {
-      console.error('[SampleService] Fetch Error:', e);
+      console.error(`[SampleService] Failed to download bank ${bankName}:`, e);
       throw e;
     }
   }
 
-  /**
-   * Download all samples in a kit and store in IndexedDB
-   */
-  public async downloadBank(bank: SampleBank, onProgress?: (percent: number) => void): Promise<void> {
-    try {
-        // Get samples for this kit
-        const kitSamples = Object.keys(this.sampleMap).filter(name => name.startsWith(`${bank.name}:`));
-
-        if (kitSamples.length === 0) throw new Error('No samples found in kit');
-
-        let completed = 0;
-
-        // 2. Process in chunks to avoid rate limiting
-        const CHUNK_SIZE = 5;
-        for (let i = 0; i < kitSamples.length; i += CHUNK_SIZE) {
-            const chunk = kitSamples.slice(i, i + CHUNK_SIZE);
-            await Promise.all(chunk.map(async (sampleName: string) => {
-                const url = this.sampleMap[sampleName];
-                const blobResp = await fetch(url);
-                const blob = await blobResp.blob();
-
-                // sampleName is kit:bank:index
-                const parts = sampleName.split(':');
-                const bankField = parts.slice(0, parts.length - 1).join(':');
-
-                // Store in DB
-                await db.samples.put({
-                    name: sampleName,
-                    bank: bankField,
-                    data: blob
-                });
-
-                // Register live
-                const objUrl = URL.createObjectURL(blob);
-                strudelService.registerSample(sampleName, objUrl);
-
-                this.samples.set(sampleName, {
-                    name: sampleName,
-                    path: objUrl,
-                    source: 'offline',
-                    bank: bankField
-                });
-            }));
-
-            completed += chunk.length;
-            if (onProgress) onProgress(Math.round((completed / kitSamples.length) * 100));
-        }
-
-        // Register banks with Strudel
-        const kitBanks: Record<string, string[]> = {};
-        kitSamples.forEach(name => {
-            const sample = this.samples.get(name);
-            if (sample && sample.bank) {
-                if (!kitBanks[sample.bank]) kitBanks[sample.bank] = [];
-                kitBanks[sample.bank].push(sample.path);
-            }
-        });
-
-        for (const bankName in kitBanks) {
-            strudelService.registerBank(bankName, kitBanks[bankName]);
-        }
-
-        // Update cache state
-        const bankIndex = this.banksCache.findIndex(b => b.name === bank.name);
-        if (bankIndex !== -1) this.banksCache[bankIndex].isOffline = true;
-
-    } catch (e) {
-        console.error(`[SampleService] Failed to download kit ${bank.name}:`, e);
-        throw e;
-    }
-  }
-
   public async deleteBank(bankName: string) {
-      // Delete all samples belonging to this kit
-      await db.samples.where('name').startsWith(`${bankName}:`).delete();
-      
-      const bankIndex = this.banksCache.findIndex(b => b.name === bankName);
-      if (bankIndex !== -1) this.banksCache[bankIndex].isOffline = false;
+    await db.samples.where('bank').equals(bankName).delete();
+
+    for (const [key, sample] of this.samples.entries()) {
+      if (sample.bank === bankName) {
+        this.samples.delete(key);
+      }
+    }
+
+    const bankIndex = this.banksCache.findIndex(b => b.name === bankName);
+    if (bankIndex !== -1) this.banksCache[bankIndex].isOffline = false;
   }
 
   private async getOfflineBanks(): Promise<Set<string>> {
-      const keys = await db.samples.orderBy('bank').uniqueKeys();
-      return new Set(keys.map(k => String(k)));
+    const keys = await db.samples.orderBy('bank').uniqueKeys();
+    return new Set(keys.map(k => String(k)));
   }
 }
 
