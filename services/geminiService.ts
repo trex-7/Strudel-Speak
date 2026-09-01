@@ -1,16 +1,50 @@
-import { MAX_RETRIES, API_KEY_STORAGE_KEY } from '../constants';
+import { GoogleGenAI, Type } from '@google/genai';
+import { MAX_RETRIES, API_KEY_STORAGE_KEY, SYSTEM_PROMPT } from '../constants';
 import { strudelService } from './strudelService';
 import { StrudelPattern, InteractionLog, LineDiagnosisRequest, LineDiagnosisResponse, BatchTrackFixRequest, BatchTrackFixResponse } from '../types';
 import { PATTERN_EFFECTS_DEMOS } from '../patternEffects';
 import { learningMemoryService } from './learningMemoryService';
 
-const getCustomKey = (): string => {
-  if (typeof window === 'undefined') return '';
-  return localStorage.getItem(API_KEY_STORAGE_KEY) || '';
+/**
+ * Retrieves the effective Gemini API key from all available client-side sources:
+ * 1. User manual input saved in localStorage
+ * 2. Bundled environment variables (Vite define / VITE_GEMINI_API_KEY / process.env.GEMINI_API_KEY)
+ */
+export const getEffectiveApiKey = (): string => {
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem(API_KEY_STORAGE_KEY);
+    if (saved && saved.trim()) return saved.trim();
+  }
+  
+  if (typeof process !== 'undefined' && process.env) {
+    if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()) {
+      return process.env.GEMINI_API_KEY.trim();
+    }
+    if (process.env.API_KEY && process.env.API_KEY.trim()) {
+      return process.env.API_KEY.trim();
+    }
+  }
+
+  try {
+    const metaEnv = (import.meta as any).env;
+    if (metaEnv) {
+      if (metaEnv.VITE_GEMINI_API_KEY && metaEnv.VITE_GEMINI_API_KEY.trim()) {
+        return metaEnv.VITE_GEMINI_API_KEY.trim();
+      }
+      if (metaEnv.GEMINI_API_KEY && metaEnv.GEMINI_API_KEY.trim()) {
+        return metaEnv.GEMINI_API_KEY.trim();
+      }
+    }
+  } catch {
+    // Ignore environment access errors in restricted contexts
+  }
+
+  return '';
 };
 
 export class GeminiService {
   private serverHasKey: boolean = false;
+  private isServerAvailable: boolean | null = null;
   private logs: InteractionLog[] = [];
 
   constructor() {
@@ -19,14 +53,27 @@ export class GeminiService {
 
   public async checkServerStatus(): Promise<boolean> {
     try {
-      const res = await fetch('/api/gemini/status');
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      const res = await fetch('/api/gemini/status', {
+        signal: controller.signal,
+        headers: { Accept: 'application/json' }
+      });
+      clearTimeout(timeoutId);
+
       if (res.ok) {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         this.serverHasKey = Boolean(data.configured);
+        this.isServerAvailable = true;
         return this.serverHasKey;
+      } else {
+        // 404 or static hosting (e.g. Netlify, Vercel static, GitHub Pages)
+        this.isServerAvailable = false;
+        this.serverHasKey = false;
       }
     } catch {
-      // Server not reachable or in static mode
+      // Server not reachable (static deploy or offline)
+      this.isServerAvailable = false;
       this.serverHasKey = false;
     }
     return false;
@@ -34,12 +81,16 @@ export class GeminiService {
 
   public updateKey(key: string) {
     if (typeof window !== 'undefined') {
-      localStorage.setItem(API_KEY_STORAGE_KEY, key);
+      if (key && key.trim()) {
+        localStorage.setItem(API_KEY_STORAGE_KEY, key.trim());
+      } else {
+        localStorage.removeItem(API_KEY_STORAGE_KEY);
+      }
     }
   }
 
   public hasKey(): boolean {
-    return this.serverHasKey || Boolean(getCustomKey());
+    return this.serverHasKey || Boolean(getEffectiveApiKey());
   }
 
   public getLogs(): InteractionLog[] {
@@ -49,6 +100,22 @@ export class GeminiService {
   private addLog(log: InteractionLog) {
     this.logs.unshift(log); // Newest first
     if (this.logs.length > 50) this.logs.pop(); // Keep last 50
+  }
+
+  /**
+   * Helper to create a direct client-side GoogleGenAI instance in browser
+   */
+  private getClientSideAI(): GoogleGenAI | null {
+    const key = getEffectiveApiKey();
+    if (!key) return null;
+    return new GoogleGenAI({
+      apiKey: key,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
   }
 
   /**
@@ -278,7 +345,64 @@ export class GeminiService {
   }
 
   /**
-   * The "Self-Healing" Loop with Server-Side Gemini API & Local Fallback
+   * Generates a pattern using direct browser Gemini SDK call
+   */
+  private async generatePatternDirectClient(
+    userPrompt: string,
+    currentPattern: string,
+    chaos: number,
+    learnedRules: string,
+    previousErrors?: string
+  ): Promise<{ explanation: string; code: string; visualHint: string }> {
+    const ai = this.getClientSideAI();
+    if (!ai) {
+      throw new Error('No Gemini API key available on client');
+    }
+
+    let fullPrompt = `
+${learnedRules || ''}
+
+Current Pattern:
+${currentPattern || ''}
+
+User Request: ${userPrompt}
+Chaos Level: ${chaos ?? 0.5}/1.0
+`;
+
+    if (previousErrors) {
+      fullPrompt += `\n\nPREVIOUS ATTEMPT FAILED.
+Errors: ${previousErrors}
+Please fix the syntax and return a valid JSON object.`;
+    }
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.7-flash',
+      contents: fullPrompt,
+      config: {
+        systemInstruction: SYSTEM_PROMPT + '\n\n' + (learnedRules || ''),
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            explanation: { type: Type.STRING },
+            code: { type: Type.STRING },
+            visualHint: { type: Type.STRING },
+          },
+          required: ['explanation', 'code', 'visualHint'],
+        },
+      },
+    });
+
+    const responseText = response.text;
+    if (!responseText) {
+      throw new Error('Empty response from client-side Gemini call');
+    }
+
+    return JSON.parse(responseText);
+  }
+
+  /**
+   * The "Self-Healing" Loop supporting Full-Stack Server, Direct Client Gemini, and Local Fallback
    */
   public async generatePattern(
     userPrompt: string, 
@@ -304,7 +428,7 @@ export class GeminiService {
     }
 
     const learnedRules = learningMemoryService.getPromptLearningContext();
-    const customKey = getCustomKey();
+    const effectiveKey = getEffectiveApiKey();
 
     let previousErrors = '';
     if (isRetry) {
@@ -313,30 +437,52 @@ export class GeminiService {
         .join('\n');
     }
 
-    try {
-      const response = await fetch('/api/gemini/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+    let result: { code: string; explanation?: string; visualHint?: string } | null = null;
+
+    // 1. Try server endpoint first if server is available (or unconfirmed)
+    if (this.isServerAvailable !== false) {
+      try {
+        const response = await fetch('/api/gemini/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userPrompt,
+            currentPattern,
+            chaos,
+            customKey: effectiveKey || undefined,
+            learnedRules,
+            previousErrors: previousErrors || undefined
+          })
+        });
+
+        if (response.ok) {
+          result = await response.json();
+          this.isServerAvailable = true;
+        } else if (response.status === 404) {
+          this.isServerAvailable = false;
+        }
+      } catch {
+        this.isServerAvailable = false;
+      }
+    }
+
+    // 2. If server not available (e.g. Netlify deploy) or failed, try direct client-side Gemini call
+    if (!result && effectiveKey) {
+      try {
+        result = await this.generatePatternDirectClient(
           userPrompt,
           currentPattern,
           chaos,
-          customKey: customKey || undefined,
           learnedRules,
-          previousErrors: previousErrors || undefined
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `HTTP ${response.status}: Failed to generate pattern`);
+          previousErrors
+        );
+      } catch (clientErr) {
+        console.warn('[GeminiService] Client-side Gemini generation error:', clientErr);
       }
+    }
 
-      const result = await response.json();
-      if (!result || typeof result.code !== 'string') {
-        throw new Error('Invalid response structure from AI backend');
-      }
-
+    // 3. If Gemini succeeded (via server or client), validate and self-heal
+    if (result && typeof result.code === 'string') {
       const validation = strudelService.validatePattern(result.code);
 
       logEntry.attempts.push({
@@ -366,19 +512,19 @@ export class GeminiService {
 
       return {
         code: result.code,
-        explanation: result.explanation || `Generated groove with ${userPrompt}`,
+        explanation: result.explanation || `Generated groove for "${userPrompt}"`,
         visualHint: result.visualHint || '#00ffcc',
         timestamp: Date.now()
       };
-
-    } catch (err: any) {
-      console.warn('[GeminiService] Server API error, using local pattern effects translator fallback:', err);
-      return this.translateLocally(userPrompt, currentPattern);
     }
+
+    // 4. Offline / No-Key / Fallback
+    console.info('[GeminiService] Using local pattern effects translator.');
+    return this.translateLocally(userPrompt, currentPattern);
   }
 
   /**
-   * Local surgical line fixer fallback when offline or API key is absent
+   * Local surgical line fixer fallback
    */
   public diagnoseAndFixLineLocally(request: LineDiagnosisRequest): LineDiagnosisResponse {
     const { lineContent, fullPattern, issueReason, desiredOutcome } = request;
@@ -518,41 +664,132 @@ export class GeminiService {
   }
 
   /**
+   * Direct browser Gemini call for surgical line repair
+   */
+  private async diagnoseLineDirectClient(request: LineDiagnosisRequest): Promise<LineDiagnosisResponse> {
+    const ai = this.getClientSideAI();
+    if (!ai) {
+      throw new Error('No Gemini API key available on client');
+    }
+
+    const learnedRules = learningMemoryService.getPromptLearningContext();
+    const prompt = `
+You are the Strudel Music Live-Coding Doctor & Self-Healing Pattern Optimizer.
+A user reported that Line ${(request.lineIndex ?? 0) + 1} in their Strudel live code is NOT working or not achieving their desired outcome.
+
+${learnedRules || ''}
+
+FULL ACTIVE PATTERN:
+\`\`\`javascript
+${request.fullPattern}
+\`\`\`
+
+REPORTED DEFECTIVE LINE (Line ${(request.lineIndex ?? 0) + 1}):
+\`\`\`javascript
+${request.lineContent}
+\`\`\`
+
+USER'S REPORTED ISSUE:
+"${request.issueReason || 'Defective sound, rhythm or syntax'}"
+
+DESIRED OUTCOME:
+"${request.desiredOutcome || 'Fix the line so it plays properly and sounds musically coherent.'}"
+
+CRITICAL REQUIREMENTS:
+1. Diagnose the exact cause of failure (e.g. invalid numeric sample identifier, broken parenthesis, missing LFO, wrong parameter range, out-of-sync rhythm).
+2. Generate the exact replacement line ('fixedLine') preserving correct indentation, trailing commas if inside stack(), and valid Strudel method chaining.
+3. Generate the updated full pattern ('updatedFullPattern') with this line surgically replaced.
+4. Ensure all sound names are alphabetical (e.g. s("sub"), s("kick"), s("acid"), s("hat"), s("snare")).
+5. Ensure the result passes Strudel evaluation with no syntax or runtime errors.
+
+Return a JSON object with:
+- "diagnosis": A concise 1-sentence explanation of what was wrong with the line.
+- "fixedLine": The exact replacement single line of code.
+- "updatedFullPattern": The complete updated playable Strudel code.
+- "explanation": Musical explanation of how the fix achieves the desired outcome.
+- "suggestedTag": A single category tag (e.g. "sound-name", "filter", "rhythm", "stereo", "syntax", "gain", "dsp").
+- "visualHint": Vibrant hex color (e.g. "#00ffcc", "#ec4899", "#f59e0b").
+`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.7-flash',
+      contents: prompt,
+      config: {
+        systemInstruction: SYSTEM_PROMPT + '\n\n' + (learnedRules || ''),
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            diagnosis: { type: Type.STRING },
+            fixedLine: { type: Type.STRING },
+            updatedFullPattern: { type: Type.STRING },
+            explanation: { type: Type.STRING },
+            suggestedTag: { type: Type.STRING },
+            visualHint: { type: Type.STRING },
+          },
+          required: ['diagnosis', 'fixedLine', 'updatedFullPattern', 'explanation', 'suggestedTag', 'visualHint'],
+        },
+      },
+    });
+
+    const text = response.text;
+    if (!text) throw new Error('Empty response from line diagnosis');
+    const parsed = JSON.parse(text);
+    parsed.originalLine = request.lineContent;
+    return parsed;
+  }
+
+  /**
    * Diagnoses a specific reported line and returns the surgical fix
    */
   public async diagnoseAndFixLine(request: LineDiagnosisRequest): Promise<LineDiagnosisResponse> {
-    const customKey = getCustomKey();
+    const effectiveKey = getEffectiveApiKey();
     const learnedRules = learningMemoryService.getPromptLearningContext();
 
-    try {
-      const response = await fetch('/api/gemini/diagnose-line', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...request,
-          customKey: customKey || undefined,
-          learnedRules
-        })
-      });
+    // 1. Try server route if available
+    if (this.isServerAvailable !== false) {
+      try {
+        const response = await fetch('/api/gemini/diagnose-line', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...request,
+            customKey: effectiveKey || undefined,
+            learnedRules
+          })
+        });
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        if (response.ok) {
+          const result = await response.json();
+          result.originalLine = request.lineContent;
+
+          const validation = strudelService.validatePattern(result.updatedFullPattern);
+          if (validation.isValid) {
+            return result;
+          }
+        } else if (response.status === 404) {
+          this.isServerAvailable = false;
+        }
+      } catch {
+        this.isServerAvailable = false;
       }
-
-      const result = await response.json();
-      result.originalLine = request.lineContent;
-
-      const validation = strudelService.validatePattern(result.updatedFullPattern);
-      if (!validation.isValid) {
-        console.warn('[Gemini Diagnosis] Pattern failed validation, using local diagnostics fallback');
-        return this.diagnoseAndFixLineLocally(request);
-      }
-
-      return result;
-    } catch (err) {
-      console.warn('[Gemini Diagnosis] API error, using local diagnostics fallback:', err);
-      return this.diagnoseAndFixLineLocally(request);
     }
+
+    // 2. Direct client-side Gemini fallback
+    if (effectiveKey) {
+      try {
+        const directResult = await this.diagnoseLineDirectClient(request);
+        const validation = strudelService.validatePattern(directResult.updatedFullPattern);
+        if (validation.isValid) {
+          return directResult;
+        }
+      } catch (err) {
+        console.warn('[Gemini Line Diagnosis] Client API error, using local fallback:', err);
+      }
+    }
+
+    // 3. Local diagnosis fallback
+    return this.diagnoseAndFixLineLocally(request);
   }
 
   /**
@@ -591,6 +828,83 @@ export class GeminiService {
   }
 
   /**
+   * Direct client-side batch healing
+   */
+  private async diagnoseBatchDirectClient(request: BatchTrackFixRequest): Promise<BatchTrackFixResponse> {
+    const ai = this.getClientSideAI();
+    if (!ai) throw new Error('No client API key');
+
+    const learnedRules = learningMemoryService.getPromptLearningContext();
+    const prompt = `
+You are the Strudel Music Live-Coding Doctor & Multi-Track Audio Healer.
+The user flagged ${(request.flaggedTracks || []).length} track(s) in their live performance as BAD / DEFECTIVE / NEEDING FIX.
+
+${learnedRules || ''}
+
+FULL ACTIVE PATTERN:
+\`\`\`javascript
+${request.fullPattern}
+\`\`\`
+
+FLAGGED TRACKS TO FIX:
+${(request.flaggedTracks || []).map((t: any) => `
+Track #${(t.trackIndex ?? 0) + 1} (Line ${(t.lineIndex ?? 0) + 1}, Instrument: "${t.soundName}"):
+Code: \`${t.code}\`
+Reported Issue: "${t.issueReason || 'Bad sound, rhythm or syntax'}"
+Desired Outcome: "${t.desiredOutcome || 'Make it sound cohesive, in-key, and grooving'}"
+`).join('\n')}
+
+CRITICAL INSTRUCTIONS:
+1. Fix each flagged track individually while ensuring all tracks groove harmoniously together.
+2. Ensure all sound names are valid alphabetical Strudel samples (e.g. s("sub"), s("kick"), s("acid"), s("hat"), s("snare"), s("chord")).
+3. Generate the updated full pattern with these tracks replaced.
+4. For each fixed track, provide a concise 1-sentence diagnosis and musical explanation.
+
+Return a JSON object with:
+- "updatedFullPattern": The full playable Strudel pattern code.
+- "overallExplanation": A brief summary of what was fixed across the mix.
+- "fixedTracks": Array of objects matching the flagged tracks with "trackIndex", "lineIndex", "originalCode", "fixedCode", "diagnosis", "explanation", "suggestedTag".
+`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.7-flash',
+      contents: prompt,
+      config: {
+        systemInstruction: SYSTEM_PROMPT + '\n\n' + (learnedRules || ''),
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            updatedFullPattern: { type: Type.STRING },
+            overallExplanation: { type: Type.STRING },
+            fixedTracks: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  trackIndex: { type: Type.INTEGER },
+                  lineIndex: { type: Type.INTEGER },
+                  originalCode: { type: Type.STRING },
+                  fixedCode: { type: Type.STRING },
+                  diagnosis: { type: Type.STRING },
+                  explanation: { type: Type.STRING },
+                  suggestedTag: { type: Type.STRING },
+                },
+                required: ['trackIndex', 'lineIndex', 'originalCode', 'fixedCode', 'diagnosis', 'explanation'],
+              },
+            },
+          },
+          required: ['updatedFullPattern', 'overallExplanation', 'fixedTracks'],
+        },
+      },
+    });
+
+    const text = response.text;
+    if (!text) throw new Error('Empty response from batch diagnosis');
+    return JSON.parse(text);
+  }
+
+  /**
    * AI batch diagnosis and surgical multi-track healing
    */
   public async diagnoseAndFixBatchTracks(request: BatchTrackFixRequest): Promise<BatchTrackFixResponse> {
@@ -598,37 +912,51 @@ export class GeminiService {
       return this.diagnoseAndFixBatchLocally(request);
     }
 
-    const customKey = getCustomKey();
+    const effectiveKey = getEffectiveApiKey();
     const learnedRules = learningMemoryService.getPromptLearningContext();
 
-    try {
-      const response = await fetch('/api/gemini/diagnose-batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...request,
-          customKey: customKey || undefined,
-          learnedRules
-        })
-      });
+    // 1. Try server route if available
+    if (this.isServerAvailable !== false) {
+      try {
+        const response = await fetch('/api/gemini/diagnose-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...request,
+            customKey: effectiveKey || undefined,
+            learnedRules
+          })
+        });
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        if (response.ok) {
+          const result = await response.json() as BatchTrackFixResponse;
+          const validation = strudelService.validatePattern(result.updatedFullPattern);
+          if (validation.isValid) {
+            return result;
+          }
+        } else if (response.status === 404) {
+          this.isServerAvailable = false;
+        }
+      } catch {
+        this.isServerAvailable = false;
       }
-
-      const result = await response.json() as BatchTrackFixResponse;
-
-      const validation = strudelService.validatePattern(result.updatedFullPattern);
-      if (!validation.isValid) {
-        console.warn('[Gemini Batch Diagnosis] Validation failed, falling back to local surgical fixer');
-        return this.diagnoseAndFixBatchLocally(request);
-      }
-
-      return result;
-    } catch (err) {
-      console.warn('[Gemini Batch Diagnosis] Error, falling back to local fixer:', err);
-      return this.diagnoseAndFixBatchLocally(request);
     }
+
+    // 2. Direct client-side Gemini fallback
+    if (effectiveKey) {
+      try {
+        const directResult = await this.diagnoseBatchDirectClient(request);
+        const validation = strudelService.validatePattern(directResult.updatedFullPattern);
+        if (validation.isValid) {
+          return directResult;
+        }
+      } catch (err) {
+        console.warn('[Gemini Batch Diagnosis] Client error, falling back to local fixer:', err);
+      }
+    }
+
+    // 3. Local batch fixer fallback
+    return this.diagnoseAndFixBatchLocally(request);
   }
 }
 
