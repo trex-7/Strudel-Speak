@@ -10,7 +10,10 @@ dotenv.config();
 const PORT = 3000;
 
 function getGeminiClient(customKey?: string): GoogleGenAI | null {
-  const key = customKey || process.env.GEMINI_API_KEY;
+  let key = customKey || process.env.GEMINI_API_KEY || process.env.API_KEY || '';
+  if (typeof key === 'string') {
+    key = key.trim().replace(/^["']|["']$/g, '');
+  }
   if (!key) return null;
   return new GoogleGenAI({
     apiKey: key,

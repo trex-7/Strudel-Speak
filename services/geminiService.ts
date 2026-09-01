@@ -11,28 +11,33 @@ import { learningMemoryService } from './learningMemoryService';
  * 2. Bundled environment variables (Vite define / VITE_GEMINI_API_KEY / process.env.GEMINI_API_KEY)
  */
 export const getEffectiveApiKey = (): string => {
+  const sanitize = (val?: string): string => {
+    if (!val || typeof val !== 'string') return '';
+    return val.trim().replace(/^["']|["']$/g, '');
+  };
+
   if (typeof window !== 'undefined') {
     const saved = localStorage.getItem(API_KEY_STORAGE_KEY);
-    if (saved && saved.trim()) return saved.trim();
+    if (saved && sanitize(saved)) return sanitize(saved);
   }
   
   if (typeof process !== 'undefined' && process.env) {
-    if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()) {
-      return process.env.GEMINI_API_KEY.trim();
+    if (process.env.GEMINI_API_KEY && sanitize(process.env.GEMINI_API_KEY)) {
+      return sanitize(process.env.GEMINI_API_KEY);
     }
-    if (process.env.API_KEY && process.env.API_KEY.trim()) {
-      return process.env.API_KEY.trim();
+    if (process.env.API_KEY && sanitize(process.env.API_KEY)) {
+      return sanitize(process.env.API_KEY);
     }
   }
 
   try {
     const metaEnv = (import.meta as any).env;
     if (metaEnv) {
-      if (metaEnv.VITE_GEMINI_API_KEY && metaEnv.VITE_GEMINI_API_KEY.trim()) {
-        return metaEnv.VITE_GEMINI_API_KEY.trim();
+      if (metaEnv.VITE_GEMINI_API_KEY && sanitize(metaEnv.VITE_GEMINI_API_KEY)) {
+        return sanitize(metaEnv.VITE_GEMINI_API_KEY);
       }
-      if (metaEnv.GEMINI_API_KEY && metaEnv.GEMINI_API_KEY.trim()) {
-        return metaEnv.GEMINI_API_KEY.trim();
+      if (metaEnv.GEMINI_API_KEY && sanitize(metaEnv.GEMINI_API_KEY)) {
+        return sanitize(metaEnv.GEMINI_API_KEY);
       }
     }
   } catch {
@@ -460,6 +465,10 @@ Please fix the syntax and return a valid JSON object.`;
           this.isServerAvailable = true;
         } else if (response.status === 404) {
           this.isServerAvailable = false;
+        } else if (response.status === 400) {
+          // If server returned 400 because GEMINI_API_KEY is not configured on the server, try client fallback
+          const errData = await response.json().catch(() => ({}));
+          console.info('[GeminiService] Server API returned 400:', errData.error || response.statusText);
         }
       } catch {
         this.isServerAvailable = false;
@@ -769,6 +778,10 @@ Return a JSON object with:
           }
         } else if (response.status === 404) {
           this.isServerAvailable = false;
+        } else if (response.status === 400) {
+          // If server returned 400, continue to client / local fallback
+          const errData = await response.json().catch(() => ({}));
+          console.info('[Gemini Line Diagnosis] Server API returned 400:', errData.error || response.statusText);
         }
       } catch {
         this.isServerAvailable = false;
@@ -936,6 +949,9 @@ Return a JSON object with:
           }
         } else if (response.status === 404) {
           this.isServerAvailable = false;
+        } else if (response.status === 400) {
+          const errData = await response.json().catch(() => ({}));
+          console.info('[Gemini Batch Diagnosis] Server API returned 400:', errData.error || response.statusText);
         }
       } catch {
         this.isServerAvailable = false;
