@@ -56,31 +56,56 @@ export class GeminiService {
     this.checkServerStatus();
   }
 
-  public async checkServerStatus(): Promise<boolean> {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
-      const res = await fetch('/api/gemini/status', {
-        signal: controller.signal,
-        headers: { Accept: 'application/json' }
-      });
-      clearTimeout(timeoutId);
+  /**
+   * Helper to make API calls to the server backend or Netlify serverless functions
+   */
+  private async callServerApi(subPath: string, payload: any): Promise<any | null> {
+    const urlsToTry = [
+      `/api/gemini/${subPath}`,
+      `/.netlify/functions/api/gemini/${subPath}`,
+    ];
 
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        this.serverHasKey = Boolean(data.configured);
-        this.isServerAvailable = true;
-        return this.serverHasKey;
-      } else {
-        // 404 or static hosting (e.g. Netlify, Vercel static, GitHub Pages)
-        this.isServerAvailable = false;
-        this.serverHasKey = false;
-      }
-    } catch {
-      // Server not reachable (static deploy or offline)
-      this.isServerAvailable = false;
-      this.serverHasKey = false;
+    if (subPath === 'generate' || subPath === 'status') {
+      urlsToTry.push('/.netlify/functions/gemini');
     }
+
+    for (const url of urlsToTry) {
+      try {
+        const isGet = subPath === 'status';
+        const res = await fetch(url, {
+          method: isGet ? 'GET' : 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: isGet ? undefined : JSON.stringify(payload),
+        });
+
+        if (res.ok) {
+          this.isServerAvailable = true;
+          return await res.json();
+        } else if (res.status === 400) {
+          const errData = await res.json().catch(() => ({}));
+          console.info(`[GeminiService] Server API (${url}) returned 400:`, errData.error || res.statusText);
+          // If the key is missing on the server, return null to allow client-side key fallback
+          return null;
+        }
+      } catch {
+        // Try next route
+      }
+    }
+
+    this.isServerAvailable = false;
+    return null;
+  }
+
+  public async checkServerStatus(): Promise<boolean> {
+    const data = await this.callServerApi('status', {});
+    if (data && typeof data === 'object') {
+      this.serverHasKey = Boolean(data.configured);
+      return this.serverHasKey;
+    }
+    this.serverHasKey = false;
     return false;
   }
 
@@ -446,33 +471,14 @@ Please fix the syntax and return a valid JSON object.`;
 
     // 1. Try server endpoint first if server is available (or unconfirmed)
     if (this.isServerAvailable !== false) {
-      try {
-        const response = await fetch('/api/gemini/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userPrompt,
-            currentPattern,
-            chaos,
-            customKey: effectiveKey || undefined,
-            learnedRules,
-            previousErrors: previousErrors || undefined
-          })
-        });
-
-        if (response.ok) {
-          result = await response.json();
-          this.isServerAvailable = true;
-        } else if (response.status === 404) {
-          this.isServerAvailable = false;
-        } else if (response.status === 400) {
-          // If server returned 400 because GEMINI_API_KEY is not configured on the server, try client fallback
-          const errData = await response.json().catch(() => ({}));
-          console.info('[GeminiService] Server API returned 400:', errData.error || response.statusText);
-        }
-      } catch {
-        this.isServerAvailable = false;
-      }
+      result = await this.callServerApi('generate', {
+        userPrompt,
+        currentPattern,
+        chaos,
+        customKey: effectiveKey || undefined,
+        learnedRules,
+        previousErrors: previousErrors || undefined,
+      });
     }
 
     // 2. If server not available (e.g. Netlify deploy) or failed, try direct client-side Gemini call
@@ -757,34 +763,18 @@ Return a JSON object with:
 
     // 1. Try server route if available
     if (this.isServerAvailable !== false) {
-      try {
-        const response = await fetch('/api/gemini/diagnose-line', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...request,
-            customKey: effectiveKey || undefined,
-            learnedRules
-          })
-        });
+      const serverResult = await this.callServerApi('diagnose-line', {
+        ...request,
+        customKey: effectiveKey || undefined,
+        learnedRules,
+      });
 
-        if (response.ok) {
-          const result = await response.json();
-          result.originalLine = request.lineContent;
-
-          const validation = strudelService.validatePattern(result.updatedFullPattern);
-          if (validation.isValid) {
-            return result;
-          }
-        } else if (response.status === 404) {
-          this.isServerAvailable = false;
-        } else if (response.status === 400) {
-          // If server returned 400, continue to client / local fallback
-          const errData = await response.json().catch(() => ({}));
-          console.info('[Gemini Line Diagnosis] Server API returned 400:', errData.error || response.statusText);
+      if (serverResult && typeof serverResult === 'object' && serverResult.updatedFullPattern) {
+        serverResult.originalLine = request.lineContent;
+        const validation = strudelService.validatePattern(serverResult.updatedFullPattern);
+        if (validation.isValid) {
+          return serverResult;
         }
-      } catch {
-        this.isServerAvailable = false;
       }
     }
 
@@ -930,31 +920,17 @@ Return a JSON object with:
 
     // 1. Try server route if available
     if (this.isServerAvailable !== false) {
-      try {
-        const response = await fetch('/api/gemini/diagnose-batch', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...request,
-            customKey: effectiveKey || undefined,
-            learnedRules
-          })
-        });
+      const serverResult = await this.callServerApi('diagnose-batch', {
+        ...request,
+        customKey: effectiveKey || undefined,
+        learnedRules,
+      });
 
-        if (response.ok) {
-          const result = await response.json() as BatchTrackFixResponse;
-          const validation = strudelService.validatePattern(result.updatedFullPattern);
-          if (validation.isValid) {
-            return result;
-          }
-        } else if (response.status === 404) {
-          this.isServerAvailable = false;
-        } else if (response.status === 400) {
-          const errData = await response.json().catch(() => ({}));
-          console.info('[Gemini Batch Diagnosis] Server API returned 400:', errData.error || response.statusText);
+      if (serverResult && typeof serverResult === 'object' && serverResult.updatedFullPattern) {
+        const validation = strudelService.validatePattern(serverResult.updatedFullPattern);
+        if (validation.isValid) {
+          return serverResult;
         }
-      } catch {
-        this.isServerAvailable = false;
       }
     }
 
