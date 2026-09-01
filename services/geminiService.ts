@@ -1,34 +1,45 @@
-import { GoogleGenAI, Type } from "@google/genai";
-import { SYSTEM_PROMPT, MAX_RETRIES, API_KEY_STORAGE_KEY } from '../constants';
+import { MAX_RETRIES, API_KEY_STORAGE_KEY } from '../constants';
 import { strudelService } from './strudelService';
 import { StrudelPattern, InteractionLog, LineDiagnosisRequest, LineDiagnosisResponse, BatchTrackFixRequest, BatchTrackFixResponse } from '../types';
 import { PATTERN_EFFECTS_DEMOS } from '../patternEffects';
 import { learningMemoryService } from './learningMemoryService';
-import { trackService } from './trackService';
 
-// We use a getter to retrieve the key from storage or env
-const getApiKey = () => {
-    return localStorage.getItem(API_KEY_STORAGE_KEY) || (typeof process !== 'undefined' ? process.env.API_KEY : '') || '';
+const getCustomKey = (): string => {
+  if (typeof window === 'undefined') return '';
+  return localStorage.getItem(API_KEY_STORAGE_KEY) || '';
 };
 
 export class GeminiService {
-  private ai: GoogleGenAI | null = null;
+  private serverHasKey: boolean = false;
   private logs: InteractionLog[] = [];
 
   constructor() {
-    const key = getApiKey();
-    if (key) {
-      this.ai = new GoogleGenAI({ apiKey: key });
+    this.checkServerStatus();
+  }
+
+  public async checkServerStatus(): Promise<boolean> {
+    try {
+      const res = await fetch('/api/gemini/status');
+      if (res.ok) {
+        const data = await res.json();
+        this.serverHasKey = Boolean(data.configured);
+        return this.serverHasKey;
+      }
+    } catch {
+      // Server not reachable or in static mode
+      this.serverHasKey = false;
     }
+    return false;
   }
 
   public updateKey(key: string) {
-    localStorage.setItem(API_KEY_STORAGE_KEY, key);
-    this.ai = new GoogleGenAI({ apiKey: key });
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(API_KEY_STORAGE_KEY, key);
+    }
   }
 
   public hasKey(): boolean {
-    return !!this.ai;
+    return this.serverHasKey || Boolean(getCustomKey());
   }
 
   public getLogs(): InteractionLog[] {
@@ -70,7 +81,7 @@ export class GeminiService {
   s("~ snare ~ snare"),
   s("hat*8").gain(0.6),
   // Left ear plays forward, Right ear plays in reverse
-  s("acid*8").n("<0 3 [5 7] [10 12]>").jux(rev).gain(0.85),
+  s("acid*8").n("<0 3 [5 7] [10 12]>").clip(1).cut(1).jux(rev).gain(0.85),
   s("~ juno ~ ~").gain(0.4)
 )`;
       return {
@@ -89,7 +100,7 @@ export class GeminiService {
   s("hat*8").gain(0.6),
   // Talking synth with vocal formant filter
   s("saw*8").n("<0 3 7 10 12 10 7 3>").vowel("<a o e i>").gain(0.8),
-  s("sub*4").gain(0.85)
+  s("sub*4").clip(1).cut(1).gain(0.85)
 )`;
       return {
         code,
@@ -108,6 +119,7 @@ export class GeminiService {
   // 303 Acid line with resonant LFO low-pass filter sweep
   s("acid*16")
     .n("<0 3 5 7 10 12 10 7>")
+    .clip(1).cut(1)
     .lpf(sine.range(200, 3200).slow(4))
     .lpq(8)
     .gain(0.85)
@@ -127,7 +139,7 @@ export class GeminiService {
   s("~ snare ~ snare"),
   s("hat*8").gain(0.6),
   // Offset canon delayed by 1/16th cycle & transposed +4 semitones
-  s("acid*8").n("<0 3 7 10>").off(1/16, x => x.add(4)).gain(0.85),
+  s("acid*8").n("<0 3 7 10>").clip(1).cut(1).off(1/16, x => x.add(4)).gain(0.85),
   s("~ juno ~ ~").gain(0.5)
 )`;
       return {
@@ -145,7 +157,7 @@ export class GeminiService {
   // Snare doubles speed on bar 4 for an energetic drum roll fill
   s("~ snare ~ snare").every(4, x => x.fast(2)),
   s("hat*8").every(4, x => x.fast(2)).gain(0.7),
-  s("acid*8").n("<0 3 5 7>").gain(0.85)
+  s("acid*8").n("<0 3 5 7>").clip(1).cut(1).gain(0.85)
 )`;
       return {
         code,
@@ -168,7 +180,7 @@ export class GeminiService {
     .delayfeedback(0.75)
     .room(0.7)
     .gain(0.85),
-  s("sub*4").gain(0.85)
+  s("sub*4").clip(1).cut(1).gain(0.85)
 )`;
       return {
         code,
@@ -203,7 +215,7 @@ export class GeminiService {
   s("hat*8").gain(0.6),
   // 16-slice micro-gated rhythmic chop
   s("saw*4").n("<0 5 7 12>").chop(16).gain(0.8),
-  s("acid*8").n("<0 3 5 7>").gain(0.8)
+  s("acid*8").n("<0 3 5 7>").clip(1).cut(1).gain(0.8)
 )`;
       return {
         code,
@@ -220,8 +232,8 @@ export class GeminiService {
   s("~ snare ~ snare"),
   // Hi-hats with dynamic 2x and 4x stutter ratchets
   s("hat*8").ply("<1 2 [2 4] 4>").gain(0.65),
-  s("sub*4").gain(0.9),
-  s("acid*4").n("<0 3 7 10>").gain(0.8)
+  s("sub*4").clip(1).cut(1).gain(0.9),
+  s("acid*4").n("<0 3 7 10>").clip(1).cut(1).gain(0.8)
 )`;
       return {
         code,
@@ -266,7 +278,7 @@ export class GeminiService {
   }
 
   /**
-   * The "Self-Healing" Loop with Local Fallback
+   * The "Self-Healing" Loop with Server-Side Gemini API & Local Fallback
    */
   public async generatePattern(
     userPrompt: string, 
@@ -275,90 +287,68 @@ export class GeminiService {
     retryCount = 0,
     currentLogId?: string
   ): Promise<StrudelPattern> {
-    if (!this.ai) {
-      // Use local pattern effects translator fallback when API key is not present
-      console.log('[GeminiService] Using local pattern effects translator fallback');
-      return this.translateLocally(userPrompt, currentPattern);
-    }
-
     const logId = currentLogId || crypto.randomUUID();
     const isRetry = retryCount > 0;
     
     let logEntry = this.logs.find(l => l.id === logId);
     if (!logEntry) {
-        logEntry = {
-            id: logId,
-            timestamp: Date.now(),
-            userPrompt,
-            chaosLevel: chaos,
-            attempts: [],
-            status: 'failed'
-        };
-        this.addLog(logEntry);
+      logEntry = {
+        id: logId,
+        timestamp: Date.now(),
+        userPrompt,
+        chaosLevel: chaos,
+        attempts: [],
+        status: 'failed'
+      };
+      this.addLog(logEntry);
     }
 
-    let learnedRules = learningMemoryService.getPromptLearningContext();
-    let fullPrompt = `
-      ${learnedRules}
+    const learnedRules = learningMemoryService.getPromptLearningContext();
+    const customKey = getCustomKey();
 
-      Current Pattern:
-${currentPattern}
-
-      User Request: ${userPrompt}
-      Chaos Level: ${chaos}/1.0
-    `;
-
+    let previousErrors = '';
     if (isRetry) {
-      const previousErrors = logEntry.attempts
+      previousErrors = logEntry.attempts
         .map(a => `Attempt ${a.attemptNumber} Error: ${a.error}`)
         .join('\n');
-        
-      fullPrompt += `\n\nPREVIOUS ATTEMPT FAILED. 
-      Errors: ${previousErrors}
-      Please fix the syntax and return a valid JSON object.`;
     }
 
     try {
-      const response = await this.ai.models.generateContent({
-        model: 'gemini-3.7-flash',
-        contents: fullPrompt,
-        config: {
-          systemInstruction: SYSTEM_PROMPT + '\n\n' + learnedRules,
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              explanation: { type: Type.STRING },
-              code: { type: Type.STRING },
-              visualHint: { type: Type.STRING }
-            },
-            required: ["explanation", "code", "visualHint"]
-          }
-        }
+      const response = await fetch('/api/gemini/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userPrompt,
+          currentPattern,
+          chaos,
+          customKey: customKey || undefined,
+          learnedRules,
+          previousErrors: previousErrors || undefined
+        })
       });
 
-      const responseText = response.text;
-      if (!responseText) throw new Error("Empty response from AI");
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP ${response.status}: Failed to generate pattern`);
+      }
 
-      let result: any;
-      try {
-        result = JSON.parse(responseText);
-      } catch (e) {
-        throw new Error("Failed to parse JSON response");
+      const result = await response.json();
+      if (!result || typeof result.code !== 'string') {
+        throw new Error('Invalid response structure from AI backend');
       }
 
       const validation = strudelService.validatePattern(result.code);
 
       logEntry.attempts.push({
-          attemptNumber: retryCount + 1,
-          generatedCode: result.code,
-          isValid: validation.isValid,
-          error: validation.error?.message
+        attemptNumber: retryCount + 1,
+        generatedCode: result.code,
+        isValid: validation.isValid,
+        error: validation.error?.message
       });
 
       if (!validation.isValid) {
         if (retryCount < MAX_RETRIES) {
-          console.warn(`[Gemini] Validation failed: ${validation.error?.message}. Retrying...`);
+          console.warn(`[Gemini] Validation failed: ${validation.error?.message}. Retrying self-healing...`);
           return this.generatePattern(
             userPrompt,
             currentPattern,
@@ -367,7 +357,6 @@ ${currentPattern}
             logId
           );
         } else {
-          // Fall back gracefully to local translator
           return this.translateLocally(userPrompt, currentPattern);
         }
       }
@@ -377,13 +366,13 @@ ${currentPattern}
 
       return {
         code: result.code,
-        explanation: result.explanation,
-        visualHint: result.visualHint,
+        explanation: result.explanation || `Generated groove with ${userPrompt}`,
+        visualHint: result.visualHint || '#00ffcc',
         timestamp: Date.now()
       };
 
     } catch (err: any) {
-      console.warn("[Gemini] API Error, using local pattern effects translator fallback:", err);
+      console.warn('[GeminiService] Server API error, using local pattern effects translator fallback:', err);
       return this.translateLocally(userPrompt, currentPattern);
     }
   }
@@ -431,7 +420,6 @@ ${currentPattern}
       /s\(\s*["'](?:moog|bass|analogbass|subbass|sawbass|acid|sub|sawtooth|gm_synth_bass_1)["']\s*\)/.test(lineContent)
     ) {
       if (!lineContent.includes('.clip(') && !lineContent.includes('.cut(')) {
-        // Surgically insert .clip(1).cut(1) after s("...") or scale(...)
         if (/\.s\([^)]+\)/.test(lineContent)) {
           fixedLine = lineContent.replace(/(\.s\([^)]+\))/, '$1.clip(1).cut(1)');
         } else if (/\.scale\([^)]+\)/.test(lineContent)) {
@@ -455,7 +443,7 @@ ${currentPattern}
       suggestedTag = 'stereo';
     }
 
-    // 3. Filter issues (lpf string or missing LFO)
+    // 4. Filter issues (lpf string or missing LFO)
     if (combinedReason.includes('filter') || combinedReason.includes('lpf') || combinedReason.includes('sweep')) {
       if (/lpf\(["'][^"']+["']\)/.test(lineContent) || combinedReason.includes('sweep') || combinedReason.includes('open')) {
         fixedLine = lineContent.replace(/\.lpf\([^)]+\)/, '.lpf(sine.range(200, 3200).slow(4)).lpq(8)');
@@ -468,7 +456,7 @@ ${currentPattern}
       }
     }
 
-    // 4. Volume / Harshness
+    // 5. Volume / Harshness
     if (combinedReason.includes('loud') || combinedReason.includes('harsh') || combinedReason.includes('quiet') || combinedReason.includes('gain')) {
       if (lineContent.includes('.gain(')) {
         fixedLine = lineContent.replace(/\.gain\([0-9.]+\)/, combinedReason.includes('quiet') ? '.gain(0.95)' : '.gain(0.65)');
@@ -480,7 +468,7 @@ ${currentPattern}
       suggestedTag = 'gain';
     }
 
-    // 5. Rhythm / Speed / Ratchet
+    // 6. Rhythm / Speed / Ratchet
     if (combinedReason.includes('fast') || combinedReason.includes('slow') || combinedReason.includes('speed') || combinedReason.includes('rhythm')) {
       if (combinedReason.includes('fast') || combinedReason.includes('double')) {
         if (lineContent.includes('*')) {
@@ -499,7 +487,7 @@ ${currentPattern}
       }
     }
 
-    // 6. Generic syntax cleanup (trailing comma or parenthesis check)
+    // 7. Generic syntax cleanup
     if (fixedLine === lineContent && (combinedReason.includes('syntax') || combinedReason.includes('error') || combinedReason.includes('broken'))) {
       fixedLine = lineContent.replace(/,\s*,/g, ',').replace(/\(\s*\)/g, '()');
       diagnosis = 'Repaired syntax delimiters and closures.';
@@ -533,84 +521,30 @@ ${currentPattern}
    * Diagnoses a specific reported line and returns the surgical fix
    */
   public async diagnoseAndFixLine(request: LineDiagnosisRequest): Promise<LineDiagnosisResponse> {
-    const { lineIndex, lineContent, fullPattern, issueReason, desiredOutcome } = request;
-
-    if (!this.ai) {
-      return this.diagnoseAndFixLineLocally(request);
-    }
-
+    const customKey = getCustomKey();
     const learnedRules = learningMemoryService.getPromptLearningContext();
 
-    const prompt = `
-You are the Strudel Music Live-Coding Doctor & Self-Healing Pattern Optimizer.
-A user reported that Line ${lineIndex + 1} in their Strudel live code is NOT working or not achieving their desired outcome.
-
-${learnedRules}
-
-FULL ACTIVE PATTERN:
-\`\`\`javascript
-${fullPattern}
-\`\`\`
-
-REPORTED DEFECTIVE LINE (Line ${lineIndex + 1}):
-\`\`\`javascript
-${lineContent}
-\`\`\`
-
-USER'S REPORTED ISSUE:
-"${issueReason}"
-
-DESIRED OUTCOME:
-"${desiredOutcome || 'Fix the line so it plays properly and sounds musically coherent.'}"
-
-CRITICAL REQUIREMENTS:
-1. Diagnose the exact cause of failure (e.g. invalid numeric sample identifier, broken parenthesis, missing LFO, wrong parameter range, out-of-sync rhythm).
-2. Generate the exact replacement line ('fixedLine') preserving correct indentation, trailing commas if inside stack(), and valid Strudel method chaining.
-3. Generate the updated full pattern ('updatedFullPattern') with this line surgically replaced.
-4. Ensure all sound names are alphabetical (e.g. s("sub"), s("kick"), s("acid"), s("hat"), s("snare")).
-5. Ensure the result passes Strudel evaluation with no syntax or runtime errors.
-
-Return a JSON object with:
-- "diagnosis": A concise 1-sentence explanation of what was wrong with the line.
-- "fixedLine": The exact replacement single line of code.
-- "updatedFullPattern": The complete updated playable Strudel code.
-- "explanation": Musical explanation of how the fix achieves the desired outcome.
-- "suggestedTag": A single category tag (e.g. "sound-name", "filter", "rhythm", "stereo", "syntax", "gain", "dsp").
-- "visualHint": Vibrant hex color (e.g. "#00ffcc", "#ec4899", "#f59e0b").
-`;
-
     try {
-      const response = await this.ai.models.generateContent({
-        model: 'gemini-3.7-flash',
-        contents: prompt,
-        config: {
-          systemInstruction: SYSTEM_PROMPT + '\n\n' + learnedRules,
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              diagnosis: { type: Type.STRING },
-              fixedLine: { type: Type.STRING },
-              updatedFullPattern: { type: Type.STRING },
-              explanation: { type: Type.STRING },
-              suggestedTag: { type: Type.STRING },
-              visualHint: { type: Type.STRING }
-            },
-            required: ["diagnosis", "fixedLine", "updatedFullPattern", "explanation", "suggestedTag", "visualHint"]
-          }
-        }
+      const response = await fetch('/api/gemini/diagnose-line', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...request,
+          customKey: customKey || undefined,
+          learnedRules
+        })
       });
 
-      const text = response.text;
-      if (!text) throw new Error("Empty diagnosis response from AI");
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
 
-      const result = JSON.parse(text) as LineDiagnosisResponse;
-      result.originalLine = lineContent;
+      const result = await response.json();
+      result.originalLine = request.lineContent;
 
-      // Validate pattern
       const validation = strudelService.validatePattern(result.updatedFullPattern);
       if (!validation.isValid) {
-        console.warn('[Gemini Diagnosis] Suggested pattern failed validation:', validation.error?.message);
+        console.warn('[Gemini Diagnosis] Pattern failed validation, using local diagnostics fallback');
         return this.diagnoseAndFixLineLocally(request);
       }
 
@@ -660,83 +594,30 @@ Return a JSON object with:
    * AI batch diagnosis and surgical multi-track healing
    */
   public async diagnoseAndFixBatchTracks(request: BatchTrackFixRequest): Promise<BatchTrackFixResponse> {
-    if (!this.ai || request.flaggedTracks.length === 0) {
+    if (request.flaggedTracks.length === 0) {
       return this.diagnoseAndFixBatchLocally(request);
     }
 
+    const customKey = getCustomKey();
     const learnedRules = learningMemoryService.getPromptLearningContext();
 
-    const prompt = `
-You are the Strudel Music Live-Coding Doctor & Multi-Track Audio Healer.
-The user flagged ${request.flaggedTracks.length} track(s) in their live performance as BAD / DEFECTIVE / NEEDING FIX.
-
-${learnedRules}
-
-FULL ACTIVE PATTERN:
-\`\`\`javascript
-${request.fullPattern}
-\`\`\`
-
-FLAGGED TRACKS TO FIX:
-${request.flaggedTracks.map((t, i) => `
-Track #${t.trackIndex + 1} (Line ${t.lineIndex + 1}, Instrument: "${t.soundName}"):
-Code: \`${t.code}\`
-Reported Issue: "${t.issueReason || 'Bad sound, rhythm or syntax'}"
-Desired Outcome: "${t.desiredOutcome || 'Make it sound cohesive, in-key, and grooving'}"
-`).join('\n')}
-
-CRITICAL INSTRUCTIONS:
-1. Fix each flagged track individually while ensuring all tracks groove harmoniously together.
-2. Ensure all sound names are valid alphabetical Strudel samples (e.g. s("sub"), s("kick"), s("acid"), s("hat"), s("snare"), s("chord")).
-3. Generate the updated full pattern with these tracks replaced.
-4. For each fixed track, provide a concise 1-sentence diagnosis and musical explanation.
-
-Return a JSON object with:
-- "updatedFullPattern": The full playable Strudel pattern code.
-- "overallExplanation": A brief summary of what was fixed across the mix.
-- "fixedTracks": Array of objects matching the flagged tracks with "trackIndex", "lineIndex", "originalCode", "fixedCode", "diagnosis", "explanation", "suggestedTag".
-`;
-
     try {
-      const response = await this.ai.models.generateContent({
-        model: 'gemini-3.7-flash',
-        contents: prompt,
-        config: {
-          systemInstruction: SYSTEM_PROMPT + '\n\n' + learnedRules,
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              updatedFullPattern: { type: Type.STRING },
-              overallExplanation: { type: Type.STRING },
-              fixedTracks: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    trackIndex: { type: Type.INTEGER },
-                    lineIndex: { type: Type.INTEGER },
-                    originalCode: { type: Type.STRING },
-                    fixedCode: { type: Type.STRING },
-                    diagnosis: { type: Type.STRING },
-                    explanation: { type: Type.STRING },
-                    suggestedTag: { type: Type.STRING }
-                  },
-                  required: ["trackIndex", "lineIndex", "originalCode", "fixedCode", "diagnosis", "explanation"]
-                }
-              }
-            },
-            required: ["updatedFullPattern", "overallExplanation", "fixedTracks"]
-          }
-        }
+      const response = await fetch('/api/gemini/diagnose-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...request,
+          customKey: customKey || undefined,
+          learnedRules
+        })
       });
 
-      const text = response.text;
-      if (!text) throw new Error("Empty response from AI batch diagnosis");
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
 
-      const result = JSON.parse(text) as BatchTrackFixResponse;
+      const result = await response.json() as BatchTrackFixResponse;
 
-      // Validate pattern
       const validation = strudelService.validatePattern(result.updatedFullPattern);
       if (!validation.isValid) {
         console.warn('[Gemini Batch Diagnosis] Validation failed, falling back to local surgical fixer');
@@ -752,5 +633,3 @@ Return a JSON object with:
 }
 
 export const geminiService = new GeminiService();
-
-
