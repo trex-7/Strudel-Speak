@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Send, Sparkles, Radio, AlertCircle, Volume2 } from 'lucide-react';
+import { Mic, Send, Sparkles, Radio, AlertCircle } from 'lucide-react';
 
 interface CommandBarProps {
   onTranslate: (englishPrompt: string) => void;
@@ -7,20 +7,6 @@ interface CommandBarProps {
   onOpenWorkshop?: () => void;
   className?: string;
 }
-
-const QUICK_COMMANDS = [
-  { label: '🪞 jux(rev) Stereo', prompt: 'Take the acid bassline and apply stereo juxtaposition (jux) with reverse so the left channel plays forward and the right channel plays in reverse' },
-  { label: '🗣️ Vowel Formant', prompt: 'Turn the synth into a talking vocoder effect using cycling vowel formants (a, o, e, i)' },
-  { label: '⏳ 1/16 Canon Offset', prompt: 'Create a canon echo melody by offsetting a copy of the synth by 1/16th of a cycle transposed up by 4 semitones' },
-  { label: '🌊 Resonant Acid Sweep', prompt: 'Add a sweeping low-pass filter to the 303 acid line that opens and closes smoothly over 4 bars with high resonance' },
-  { label: '🥁 4th Cycle Drum Fill', prompt: 'Every 4 cycles double the speed of the snare and hi-hats to make an energetic drum roll fill' },
-  { label: '👾 8-Bit Lo-Fi Crush', prompt: 'Bitcrush the drums into a gritty vintage 8-bit arcade sampler sound using crush and coarse' },
-  { label: '🌌 Dub Ping-Pong Delay', prompt: 'Add a deep dub techno ping-pong echo delay with high feedback and cavernous reverb to the chords' },
-  { label: '🔪 16-Grain Chop', prompt: 'Chop the synth lead into 16 micro-sliced granular stutter chunks using chop' },
-  { label: '⚡ Trap Ply Ratchet', prompt: 'Apply trap hi-hat ratchets using ply to multiply triggers by 2x and 4x across the bar' },
-  { label: '🔇 Mute Kick', prompt: 'Mute the kick drum' },
-  { label: '💥 Drop Beat', prompt: 'Unmute the kick and drop the beat with sub impact' }
-];
 
 export const CommandBar: React.FC<CommandBarProps> = ({
   onTranslate,
@@ -216,55 +202,27 @@ export const CommandBar: React.FC<CommandBarProps> = ({
   };
 
   return (
-    <div className={`bg-[#12141f] border border-[#23283b] rounded-xl p-3 shadow-xl ${className}`}>
+    <div className={`bg-[#12141f] border border-[#23283b] rounded-xl p-2 shadow-lg ${className}`}>
       
-      {/* Quick Action Chips */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-2 mb-2 no-scrollbar">
-        {onOpenWorkshop && (
-          <button
-            type="button"
-            onClick={onOpenWorkshop}
-            className="flex-shrink-0 px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-purple-900/60 hover:bg-purple-800 text-purple-200 hover:text-white border border-purple-600 transition-all active:scale-95 flex items-center gap-1 shadow-sm"
-          >
-            <span>📚 Workshop Demos</span>
-          </button>
-        )}
-        <span className="text-[10px] font-mono uppercase text-gray-400 font-bold flex-shrink-0 mr-1 flex items-center gap-1">
-          <Sparkles size={11} className="text-purple-400" />
-          Quick Actions:
-        </span>
-        {QUICK_COMMANDS.map((action, idx) => (
-          <button
-            key={idx}
-            onClick={() => handleDispatch(action.prompt)}
-            disabled={isTranslating}
-            className="flex-shrink-0 px-2.5 py-1 rounded-lg text-xs font-mono bg-[#1a1e2f] hover:bg-purple-900/40 border border-gray-700/60 hover:border-purple-500/50 text-gray-200 hover:text-purple-200 transition-all active:scale-95 disabled:opacity-50"
-            title={`Translate: "${action.prompt}"`}
-          >
-            {action.label}
-          </button>
-        ))}
-      </div>
-
       {/* Main English Prompt & Mic Form */}
-      <form onSubmit={handleSubmit} className="flex items-center gap-2">
+      <form onSubmit={handleSubmit} className="flex items-center gap-1.5">
         {/* Voice Button */}
         {isSupported && (
           <button
             type="button"
             onClick={toggleListening}
             disabled={isTranslating}
-            className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 transition-all active:scale-95 shadow-md ${
+            className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-all active:scale-95 shadow-sm ${
               isListening
-                ? 'bg-red-600 text-white shadow-red-500/40 ring-2 ring-red-400 animate-pulse'
+                ? 'bg-red-600 text-white shadow-red-500/40 ring-1 ring-red-400 animate-pulse'
                 : 'bg-[#1e2337] hover:bg-purple-700 text-purple-300 hover:text-white border border-purple-800/40'
             }`}
             title={isListening ? 'Listening live... Click to stop' : 'Click to Speak English Command'}
           >
             {isListening ? (
-              <Radio size={20} className="animate-spin" />
+              <Radio size={16} className="animate-spin" />
             ) : (
-              <Mic size={20} />
+              <Mic size={16} />
             )}
           </button>
         )}
@@ -281,7 +239,7 @@ export const CommandBar: React.FC<CommandBarProps> = ({
                 ? `Listening... ${transcript ? `"${transcript}"` : 'Say your command in English...'}`
                 : 'Type or speak in English (e.g. "mute 909 kick", "add 303 acid bass", "speed up to 135 bpm")...'
             }
-            className={`w-full bg-[#0a0c14] border text-gray-100 placeholder-gray-500 text-sm rounded-xl px-4 py-2.5 focus:outline-none transition-all ${
+            className={`w-full bg-[#0a0c14] border text-gray-100 placeholder-gray-500 text-xs rounded-lg px-3 py-1.5 focus:outline-none transition-all ${
               isListening
                 ? 'border-red-500/70 ring-1 ring-red-500/40'
                 : 'border-[#2a3047] focus:border-purple-500 focus:ring-1 focus:ring-purple-500/40'
@@ -293,17 +251,17 @@ export const CommandBar: React.FC<CommandBarProps> = ({
         <button
           type="submit"
           disabled={!text.trim() || isTranslating}
-          className="px-4 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-40 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-all shadow-md active:scale-95 flex-shrink-0"
+          className="px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all shadow-sm active:scale-95 flex-shrink-0"
         >
           {isTranslating ? (
             <>
-              <Sparkles size={14} className="animate-spin" />
+              <Sparkles size={12} className="animate-spin" />
               <span>Translating...</span>
             </>
           ) : (
             <>
               <span>Translate</span>
-              <Send size={13} />
+              <Send size={11} />
             </>
           )}
         </button>
@@ -311,8 +269,8 @@ export const CommandBar: React.FC<CommandBarProps> = ({
 
       {/* Mic Audio Feedback / Error */}
       {audioError && (
-        <div className="mt-2 text-xs text-red-400 flex items-center gap-1.5">
-          <AlertCircle size={13} />
+        <div className="mt-1 text-[11px] text-red-400 flex items-center gap-1.5">
+          <AlertCircle size={12} />
           <span>{audioError}</span>
         </div>
       )}

@@ -97,3 +97,84 @@ export interface VSCodeApi {
   getState(): any;
   setState(state: any): void;
 }
+
+// User-Verified Learning & AI Self-Correction Memory Types
+export interface LearnedCorrection {
+  id: string;
+  timestamp: number;
+  issueDescription: string;
+  faultyCode: string;
+  fixedCode: string;
+  fullPatternContext?: string;
+  lineIndex?: number;
+  tags: string[];
+  notes?: string;
+  rating?: number;
+}
+
+export interface LineDiagnosisRequest {
+  lineIndex: number;
+  lineContent: string;
+  fullPattern: string;
+  issueReason: string;
+  desiredOutcome?: string;
+}
+
+export interface LineDiagnosisResponse {
+  originalLine: string;
+  fixedLine: string;
+  updatedFullPattern: string;
+  diagnosis: string;
+  explanation: string;
+  suggestedTag?: string;
+  visualHint?: string;
+}
+
+export interface TrackItem {
+  id: string;
+  trackIndex: number;
+  lineIndex: number;
+  rawCode: string;
+  soundName: string;
+  soundType: 'kick' | 'snare' | 'hat' | 'acid' | 'chord' | 'perc' | 'fx' | 'synth' | 'sub' | 'lead' | 'other';
+  soundColor: string;
+  isMuted: boolean;
+  isSolo: boolean;
+  isFlagged: boolean;
+  activeStepIndex?: number;
+  isTriggering?: boolean;
+  lastFix?: {
+    originalCode: string;
+    fixedCode: string;
+    explanation: string;
+    timestamp: number;
+    isLearned: boolean;
+  };
+}
+
+export interface BatchTrackFixRequest {
+  fullPattern: string;
+  flaggedTracks: {
+    trackIndex: number;
+    lineIndex: number;
+    code: string;
+    soundName: string;
+    issueReason?: string;
+    desiredOutcome?: string;
+  }[];
+}
+
+export interface BatchTrackFixResponse {
+  updatedFullPattern: string;
+  fixedTracks: {
+    trackIndex: number;
+    lineIndex: number;
+    originalCode: string;
+    fixedCode: string;
+    diagnosis: string;
+    explanation: string;
+    suggestedTag?: string;
+  }[];
+  overallExplanation: string;
+}
+

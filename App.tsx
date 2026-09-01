@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Play, Square, Sparkles, Key, Volume2, AlertCircle, RefreshCw, Radio, BookOpen } from 'lucide-react';
+import { Play, Square, Sparkles, Key, Volume2, AlertCircle, RefreshCw, Radio, BookOpen, Brain, Layers, Crosshair, Wrench, Copy, Check, RotateCcw } from 'lucide-react';
 import { strudelService } from './services/strudelService';
 import { geminiService } from './services/geminiService';
+import { learningMemoryService } from './services/learningMemoryService';
 import { Editor } from './components/Editor';
 import { CommandBar } from './components/CommandBar';
 import { PatternEffectsWorkshop } from './components/PatternEffectsWorkshop';
+import { LearningMemoryModal } from './components/LearningMemoryModal';
+import { LineDiagnosticModal } from './components/LineDiagnosticModal';
 import { PatternEffectDemo } from './patternEffects';
 import { INITIAL_PATTERN } from './constants';
 
@@ -18,8 +21,15 @@ export const App: React.FC = () => {
   const [visualHint, setVisualHint] = useState('#00ffcc');
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [showWorkshopModal, setShowWorkshopModal] = useState(false);
+  const [showMemoryModal, setShowMemoryModal] = useState(false);
+  const [diagnosticLine, setDiagnosticLine] = useState<{ index: number; content: string } | null>(null);
+  const [showLiveTracks, setShowLiveTracks] = useState(false);
+  const [showPatternCursors, setShowPatternCursors] = useState(true);
+  const [showScanningLaser, setShowScanningLaser] = useState(true);
+  const [memoryCount, setMemoryCount] = useState<number>(() => learningMemoryService.getCount());
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [learnedBanner, setLearnedBanner] = useState<string | null>(null);
 
   // Initialize pattern in Strudel engine on mount
   useEffect(() => {
@@ -126,59 +136,123 @@ export const App: React.FC = () => {
     <div className="flex flex-col h-screen w-screen bg-[#090b10] text-gray-100 overflow-hidden font-sans select-none">
       
       {/* 1. Header & Transport Bar */}
-      <header className="h-14 bg-[#0d1017] border-b border-[#1f2438] px-4 md:px-6 flex items-center justify-between flex-shrink-0 z-20">
+      <header className="h-11 bg-[#0d1017] border-b border-[#1f2438] px-3 md:px-4 flex items-center justify-between flex-shrink-0 z-20">
         
         {/* Brand & Tagline */}
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-purple-600 to-teal-400 flex items-center justify-center shadow-lg shadow-purple-900/30">
-            <Radio size={18} className="text-white" />
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-purple-600 to-teal-400 flex items-center justify-center shadow-md shadow-purple-900/30">
+            <Radio size={15} className="text-white" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-sm font-bold tracking-tight text-white font-mono">
-                StrudelSpeak
-              </h1>
-              <span className="text-[10px] bg-purple-950/80 border border-purple-800 text-purple-300 px-1.5 py-0.2 rounded font-mono font-semibold">
-                Pattern Effects
-              </span>
-            </div>
-            <p className="text-[11px] text-gray-400 hidden sm:block">
-              English-driven Strudel pattern synthesizer & workshop
-            </p>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xs font-bold tracking-tight text-white font-mono">
+              StrudelSpeak
+            </h1>
+            <span className="text-[9px] bg-purple-950/80 border border-purple-800 text-purple-300 px-1.5 py-0.2 rounded font-mono font-semibold hidden sm:inline">
+              Live Coding
+            </span>
           </div>
         </div>
 
-        {/* Transport & Controls */}
-        <div className="flex items-center gap-2 md:gap-3">
+        {/* Transport & Controls - Positioned Top Right of Screen */}
+        <div className="flex items-center gap-1 md:gap-1.5">
+          
+          {/* Tracks Inspector Toggle */}
+          <button
+            onClick={() => setShowLiveTracks(!showLiveTracks)}
+            className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono font-bold transition-all border ${
+              showLiveTracks
+                ? 'bg-teal-950/80 border-teal-500 text-teal-200'
+                : 'bg-[#151926] hover:bg-[#1f2538] border-gray-800 text-gray-400 hover:text-gray-200'
+            }`}
+            title="Toggle Live Quality Track Strips"
+          >
+            <Layers size={11} className={showLiveTracks ? 'text-teal-400' : ''} />
+            <span className="hidden sm:inline">Tracks</span>
+          </button>
+
+          {/* Pattern Follow Cursors Toggle */}
+          <button
+            onClick={() => setShowPatternCursors(!showPatternCursors)}
+            className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono font-bold transition-all border ${
+              showPatternCursors
+                ? 'bg-purple-950/80 border-purple-600 text-purple-200'
+                : 'bg-[#151926] hover:bg-[#1f2538] border-gray-800 text-gray-400 hover:text-gray-200'
+            }`}
+            title="Toggle Pattern Follow Cursors"
+          >
+            <Crosshair size={11} className={showPatternCursors ? 'text-teal-400' : ''} />
+            <span className="hidden md:inline">Cursors</span>
+          </button>
+
+          {/* Laser Sweep Toggle */}
+          <button
+            onClick={() => setShowScanningLaser(!showScanningLaser)}
+            className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono font-bold transition-all border ${
+              showScanningLaser
+                ? 'bg-cyan-950/80 border-cyan-600 text-cyan-200'
+                : 'bg-[#151926] hover:bg-[#1f2538] border-gray-800 text-gray-400 hover:text-gray-200'
+            }`}
+            title="Toggle Laser Playhead Beam"
+          >
+            <Radio size={11} className={showScanningLaser ? 'text-cyan-400' : ''} />
+            <span className="hidden lg:inline">Laser</span>
+          </button>
+
+          {/* Quick Line Diagnosis Action */}
+          <button
+            onClick={() => {
+              setDiagnosticLine({ index: 0, content: code.split('\n')[0] || '' });
+            }}
+            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono font-bold bg-[#141829] hover:bg-[#1f2640] border border-amber-600/50 text-amber-300 hover:text-amber-200 transition-all"
+            title="Report defective line and self-heal with AI"
+          >
+            <Wrench size={11} className="text-amber-400" />
+            <span className="hidden sm:inline">Report</span>
+          </button>
+
+          <div className="h-3.5 w-px bg-gray-800 mx-0.5"></div>
+
+          {/* AI Memory Bank Button */}
+          <button
+            onClick={() => setShowMemoryModal(true)}
+            className="flex items-center gap-1 px-2 py-1 rounded-md bg-[#151926] hover:bg-[#1f2538] border border-purple-800/70 text-purple-200 hover:text-white font-mono text-[10px] font-semibold transition-all active:scale-95 shadow-sm"
+            title="View and manage AI Learned Memory Rules & Self-Corrections"
+          >
+            <Brain size={11} className="text-teal-400" />
+            <span className="hidden sm:inline">Memory</span>
+            <span className="bg-teal-500/20 text-teal-300 px-1 py-0.2 rounded font-bold border border-teal-500/40 text-[9px]">
+              {memoryCount}
+            </span>
+          </button>
+
           {/* Workshop Demos Button */}
           <button
             onClick={() => setShowWorkshopModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-950/90 to-slate-900 hover:from-purple-900 hover:to-slate-800 border border-purple-600/70 text-purple-200 hover:text-white font-mono text-xs font-semibold transition-all active:scale-95 shadow-md"
+            className="flex items-center gap-1 px-2 py-1 rounded-md bg-gradient-to-r from-purple-950/90 to-slate-900 hover:from-purple-900 hover:to-slate-800 border border-purple-600/70 text-purple-200 hover:text-white font-mono text-[10px] font-semibold transition-all active:scale-95 shadow-sm"
             title="Explore Strudel Pattern Effects Workshop Demos translated from plain English"
           >
-            <BookOpen size={14} className="text-teal-400" />
-            <span className="hidden md:inline">Pattern Effects Workshop</span>
-            <span className="md:hidden">Workshop</span>
+            <BookOpen size={11} className="text-teal-400" />
+            <span>Workshop</span>
           </button>
 
           {/* Main Play / Halt Button */}
           <button
             onClick={handlePlayToggle}
-            className={`flex items-center gap-2 px-3 md:px-4 py-1.5 rounded-lg font-mono text-xs font-bold transition-all duration-200 shadow-md active:scale-95 ${
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-mono text-[11px] font-bold transition-all duration-200 shadow-sm active:scale-95 ${
               isPlaying
-                ? 'bg-red-600 hover:bg-red-500 text-white shadow-red-900/40 ring-2 ring-red-500/40 animate-pulse'
-                : 'bg-emerald-500 hover:bg-emerald-400 text-black shadow-emerald-950/50 ring-2 ring-emerald-400/40'
+                ? 'bg-red-600 hover:bg-red-500 text-white ring-1 ring-red-400 animate-pulse'
+                : 'bg-emerald-500 hover:bg-emerald-400 text-black ring-1 ring-emerald-400/60'
             }`}
           >
             {isPlaying ? (
               <>
-                <Square size={13} fill="currentColor" />
+                <Square size={11} fill="currentColor" />
                 <span>HALT</span>
               </>
             ) : (
               <>
-                <Play size={13} fill="currentColor" />
-                <span>RUN (Ctrl+Enter)</span>
+                <Play size={11} fill="currentColor" />
+                <span>RUN</span>
               </>
             )}
           </button>
@@ -186,33 +260,33 @@ export const App: React.FC = () => {
           {/* Key / Settings */}
           <button
             onClick={() => setShowKeyModal(true)}
-            className="p-2 text-gray-400 hover:text-white rounded-lg bg-[#151926] hover:bg-[#1f2538] border border-gray-800 transition-colors"
+            className="p-1 text-gray-400 hover:text-white rounded-md bg-[#151926] hover:bg-[#1f2538] border border-gray-800 transition-colors"
             title="Configure Gemini API Key"
           >
-            <Key size={15} />
+            <Key size={12} />
           </button>
         </div>
       </header>
 
       {/* Error alert if any */}
       {errorMessage && (
-        <div className="bg-red-950/80 border-b border-red-900/60 px-4 py-2 text-xs text-red-200 flex items-center justify-between">
+        <div className="bg-red-950/80 border-b border-red-900/60 px-3 py-1 text-xs text-red-200 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <AlertCircle size={14} className="text-red-400 flex-shrink-0" />
+            <AlertCircle size={13} className="text-red-400 flex-shrink-0" />
             <span>{errorMessage}</span>
           </div>
           <button
             onClick={() => setErrorMessage(null)}
-            className="text-[11px] text-red-300 hover:text-white font-mono underline"
+            className="text-[10px] text-red-300 hover:text-white font-mono underline"
           >
             Dismiss
           </button>
         </div>
       )}
 
-      {/* 2. Main Live Strudel Code Window */}
-      <main className="flex-1 min-h-0 p-3 md:p-4 flex flex-col gap-3">
-        <div className="flex-1 min-h-0">
+      {/* 2. Main Live Strudel Code Window - Maximized */}
+      <main className="flex-1 min-h-0 p-1.5 md:p-2 flex flex-col gap-1.5 overflow-hidden">
+        <div className="flex-1 min-h-0 h-full">
           <Editor
             code={code}
             onChange={(newCode) => {
@@ -225,6 +299,16 @@ export const App: React.FC = () => {
             lastExplanation={lastExplanation}
             visualHint={visualHint}
             onResetDefault={handleResetDefault}
+            showLiveTracks={showLiveTracks}
+            onToggleLiveTracks={() => setShowLiveTracks(!showLiveTracks)}
+            showPatternCursors={showPatternCursors}
+            onTogglePatternCursors={() => setShowPatternCursors(!showPatternCursors)}
+            showScanningLaser={showScanningLaser}
+            onToggleScanningLaser={() => setShowScanningLaser(!showScanningLaser)}
+            onOpenMemoryModal={() => setShowMemoryModal(true)}
+            memoryCount={memoryCount}
+            onMemoryUpdated={(count) => setMemoryCount(count)}
+            onReportLine={(lineIdx, content) => setDiagnosticLine({ index: lineIdx, content })}
           />
         </div>
 
@@ -247,6 +331,26 @@ export const App: React.FC = () => {
         currentCode={code}
         isPlaying={isPlaying}
       />
+
+      {/* Line Diagnostic & Auto-Healing Modal */}
+      {diagnosticLine && (
+        <LineDiagnosticModal
+          isOpen={!!diagnosticLine}
+          onClose={() => setDiagnosticLine(null)}
+          lineIndex={diagnosticLine.index}
+          lineContent={diagnosticLine.content}
+          fullPattern={code}
+          onApplyFix={(newCode, explanation, visualHint) => {
+            setCode(newCode);
+            strudelService.setPattern(newCode);
+            setLearnedBanner(`Line ${diagnosticLine.index + 1} diagnosed and trained into AI memory`);
+            setTimeout(() => setLearnedBanner(null), 5000);
+          }}
+          onMemoryLearned={(count) => {
+            setMemoryCount(count);
+          }}
+        />
+      )}
 
       {/* API Key Modal */}
       {showKeyModal && (
@@ -294,6 +398,13 @@ export const App: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* AI Learned Memory Bank Modal */}
+      <LearningMemoryModal
+        isOpen={showMemoryModal}
+        onClose={() => setShowMemoryModal(false)}
+        onMemoryUpdated={(count) => setMemoryCount(count)}
+      />
     </div>
   );
 };
