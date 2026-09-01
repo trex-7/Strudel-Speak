@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
 import { SYSTEM_PROMPT } from '../../constants';
 
 function getGeminiClient(customKey?: string): GoogleGenAI | null {
@@ -98,6 +98,7 @@ Please fix the syntax and return a valid JSON object.`;
       model: 'gemini-3.7-flash',
       contents: fullPrompt,
       config: {
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
         systemInstruction: SYSTEM_PROMPT + '\n\n' + (learnedRules || ''),
         responseMimeType: 'application/json',
         responseSchema: {

@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
 import { MAX_RETRIES, API_KEY_STORAGE_KEY, SYSTEM_PROMPT } from '../constants';
 import { strudelService } from './strudelService';
 import { StrudelPattern, InteractionLog, LineDiagnosisRequest, LineDiagnosisResponse, BatchTrackFixRequest, BatchTrackFixResponse } from '../types';
@@ -72,6 +72,10 @@ export class GeminiService {
     for (const url of urlsToTry) {
       try {
         const isGet = subPath === 'status';
+        const controller = new AbortController();
+        const timeoutMs = isGet ? 3000 : 15000;
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
         const res = await fetch(url, {
           method: isGet ? 'GET' : 'POST',
           headers: {
@@ -79,7 +83,10 @@ export class GeminiService {
             Accept: 'application/json',
           },
           body: isGet ? undefined : JSON.stringify(payload),
+          signal: controller.signal,
         });
+
+        clearTimeout(timeoutId);
 
         if (res.ok) {
           this.isServerAvailable = true;
@@ -87,11 +94,14 @@ export class GeminiService {
         } else if (res.status === 400) {
           const errData = await res.json().catch(() => ({}));
           console.info(`[GeminiService] Server API (${url}) returned 400:`, errData.error || res.statusText);
-          // If the key is missing on the server, return null to allow client-side key fallback
           return null;
+        } else if (res.status === 502 || res.status === 504 || res.status === 500) {
+          console.warn(`[GeminiService] Server API (${url}) returned ${res.status}. Trying next route or fallback.`);
         }
-      } catch {
-        // Try next route
+      } catch (err: any) {
+        if (err?.name === 'AbortError') {
+          console.warn(`[GeminiService] Request to ${url} timed out.`);
+        }
       }
     }
 
@@ -409,6 +419,7 @@ Please fix the syntax and return a valid JSON object.`;
       model: 'gemini-3.7-flash',
       contents: fullPrompt,
       config: {
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
         systemInstruction: SYSTEM_PROMPT + '\n\n' + (learnedRules || ''),
         responseMimeType: 'application/json',
         responseSchema: {
