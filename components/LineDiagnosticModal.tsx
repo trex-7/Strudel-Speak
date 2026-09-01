@@ -17,6 +17,7 @@ interface LineDiagnosticModalProps {
 
 const ISSUE_PRESETS = [
   { id: 'silent', label: '🔇 No sound / Silent', reason: 'Line produces no sound or is silent' },
+  { id: 'bass-overlap', label: '🎸 Bass overlap / muddy sustain', reason: 'Bass notes are sustaining and overlapping into muddy low-end rumble without clipping or voice choking' },
   { id: 'syntax', label: '⚠️ Syntax error / Glitch', reason: 'Syntax error or broken punctuation' },
   { id: 'filter', label: '🎛️ Filter / DSP not working', reason: 'Filter sweep, resonance or DSP effect is not working as expected' },
   { id: 'sound', label: '🥁 Wrong instrument / sample', reason: 'Wrong sound or sample name, want a better instrument' },

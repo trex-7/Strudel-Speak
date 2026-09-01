@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Play, Square, Sparkles, Key, Volume2, AlertCircle, RefreshCw, Radio, BookOpen, Brain, Layers, Crosshair, Wrench, Copy, Check, RotateCcw } from 'lucide-react';
+import { Play, Square, Sparkles, Key, Volume2, AlertCircle, RefreshCw, Radio, BookOpen, Brain, Layers, Crosshair, Wrench, Copy, Check, RotateCcw, Dices, Shuffle } from 'lucide-react';
 import { strudelService } from './services/strudelService';
 import { geminiService } from './services/geminiService';
 import { learningMemoryService } from './services/learningMemoryService';
@@ -9,16 +9,18 @@ import { PatternEffectsWorkshop } from './components/PatternEffectsWorkshop';
 import { LearningMemoryModal } from './components/LearningMemoryModal';
 import { LineDiagnosticModal } from './components/LineDiagnosticModal';
 import { PatternEffectDemo } from './patternEffects';
-import { INITIAL_PATTERN } from './constants';
+import { getRandomInitialPattern, DEFAULT_PATTERNS } from './constants';
 
 export const App: React.FC = () => {
+  // Start on a random different default pattern at every launch
+  const [initialPreset] = useState(() => getRandomInitialPattern());
   const [isPlaying, setIsPlaying] = useState(false);
-  const [code, setCode] = useState(INITIAL_PATTERN);
+  const [code, setCode] = useState(initialPreset.code);
   const [isTranslating, setIsTranslating] = useState(false);
   const [lastExplanation, setLastExplanation] = useState<string | null>(
-    'Default live groove loaded: 909 Drums, 808 Sub, 303 Acid Bassline, and Juno Chords.'
+    `[${initialPreset.genre}] ${initialPreset.explanation}`
   );
-  const [visualHint, setVisualHint] = useState('#00ffcc');
+  const [visualHint, setVisualHint] = useState(initialPreset.visualHint);
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [showWorkshopModal, setShowWorkshopModal] = useState(false);
   const [showMemoryModal, setShowMemoryModal] = useState(false);
@@ -65,11 +67,31 @@ export const App: React.FC = () => {
     }
   };
 
-  // Reset to initial groove
+  // Pick a fresh random pattern groove
+  const handleRandomPattern = async () => {
+    // Pick a random pattern different from current code
+    const candidates = DEFAULT_PATTERNS.filter(p => p.code !== code);
+    const chosen = candidates.length > 0
+      ? candidates[Math.floor(Math.random() * candidates.length)]
+      : getRandomInitialPattern();
+
+    setCode(chosen.code);
+    strudelService.setPattern(chosen.code);
+    setLastExplanation(`[${chosen.genre}] ${chosen.explanation}`);
+    setVisualHint(chosen.visualHint);
+
+    if (isPlaying) {
+      try {
+        await strudelService.play();
+      } catch (e) {
+        console.warn('Playback error on random pattern switch', e);
+      }
+    }
+  };
+
+  // Reset / shuffle to random groove
   const handleResetDefault = () => {
-    setCode(INITIAL_PATTERN);
-    strudelService.setPattern(INITIAL_PATTERN);
-    setLastExplanation('Reset back to initial default groove.');
+    handleRandomPattern();
   };
 
   // Select demo from Pattern Effects Workshop

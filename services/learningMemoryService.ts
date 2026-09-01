@@ -32,6 +32,15 @@ const DEFAULT_CORRECTIONS: LearnedCorrection[] = [
     notes: 'Use continuous LFO signals for smooth resonant sweeps.'
   },
   {
+    id: 'seed-bass-clip-cut',
+    timestamp: 1700000004000,
+    issueDescription: 'Bass notes sustaining, bleeding, and overlapping into muddy low-end rumble because sampled or synth basses lack voice choking (.cut(1)) and step duration clipping (.clip(1)).',
+    faultyCode: 'n("~ 0 ~ 0 ~ 0 [~ 3] 0").scale("C2:minor").s("moog").lpf(1200).gain(0.85)',
+    fixedCode: 'n("~ 0 ~ 0 ~ 0 [~ 3] 0").scale("C2:minor").s("moog").clip(1).cut(1).lpf(1200).gain(0.85)',
+    tags: ['bass', 'clip', 'cut', 'monophonic', 'anti-overlap'],
+    notes: 'Always chain .clip(1).cut(1) on basslines (moog, bass, sub, sawbass, acid) so each note is clipped to its step duration and previous notes are choked monophonically.'
+  },
+  {
     id: 'seed-fast-snare',
     timestamp: 1700000003000,
     issueDescription: 'Dynamic drum roll fill on specific cycle requires .every(4, x => x.fast(2)) callback closure.',

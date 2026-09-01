@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
-import { Play, Copy, Check, RotateCcw, Sparkles, Terminal, Activity, Zap, Eye, Crosshair, Radio, Brain, Wrench, AlertTriangle, Lightbulb, Layers, ThumbsDown, CheckSquare, Square } from 'lucide-react';
+import { Play, Copy, Check, RotateCcw, Dices, Shuffle, Sparkles, Terminal, Activity, Zap, Eye, Crosshair, Radio, Brain, Wrench, AlertTriangle, Lightbulb, Layers, ThumbsDown, CheckSquare, Square } from 'lucide-react';
 import { strudelService, CycleInfo } from '../services/strudelService';
 import { analyzePatternLine, ParsedLine, MiniStepToken, SOUND_COLORS } from '../services/patternTokenizer';
 import { LiveTrackStrip } from './LiveTrackStrip';
@@ -126,10 +126,10 @@ export const Editor: React.FC<EditorProps> = ({
       <div className="h-1 w-full bg-[#121626] relative overflow-hidden">
         {isPlaying && (
           <div
-            className="h-full bg-gradient-to-r from-teal-400 via-cyan-400 to-purple-500 shadow-[0_0_12px_#00ffcc] transition-all ease-linear"
+            className="h-full bg-gradient-to-r from-teal-400 via-cyan-400 to-purple-500 shadow-[0_0_12px_#00ffcc]"
             style={{
               width: `${playheadPercent}%`,
-              transitionDuration: '16ms',
+              willChange: 'width',
             }}
           />
         )}
@@ -252,10 +252,11 @@ export const Editor: React.FC<EditorProps> = ({
           {onResetDefault && (
             <button
               onClick={onResetDefault}
-              className="p-1 text-gray-400 hover:text-gray-200 rounded hover:bg-gray-800 transition-colors"
-              title="Reset to Initial Pattern"
+              className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-mono text-gray-400 hover:text-cyan-300 rounded hover:bg-[#181d30] border border-transparent hover:border-cyan-900/50 transition-colors"
+              title="Shuffle / Load Random Groove"
             >
-              <RotateCcw size={12} />
+              <Dices size={12} className="text-cyan-400" />
+              <span className="hidden sm:inline">Shuffle</span>
             </button>
           )}
         </div>
@@ -314,7 +315,7 @@ export const Editor: React.FC<EditorProps> = ({
             className="absolute top-0 bottom-0 pointer-events-none z-20"
             style={{
               left: `calc(68px + (100% - 68px) * ${cycleInfo.phase})`,
-              transition: 'left 16ms linear',
+              willChange: 'left',
             }}
           >
             {/* Vertical Laser Line */}
@@ -424,7 +425,7 @@ export const Editor: React.FC<EditorProps> = ({
                       className="absolute top-0 bottom-0 pointer-events-none"
                       style={{
                         left: `${cycleInfo.phase * 100}%`,
-                        transition: 'left 16ms linear',
+                        willChange: 'left',
                       }}
                     >
                       <div

@@ -56,13 +56,33 @@ export const SOUND_COLORS: Record<string, string> = {
   default: '#38bdf8' // Sky
 };
 
+// High-speed static line parse cache to eliminate redundant RegExp execution on every frame
+interface StaticLineCache {
+  soundType: ParsedLine['soundType'];
+  soundColor: string;
+  tokens: SyntaxToken[];
+  totalSubdivisions: number;
+  hasPattern: boolean;
+  miniTokenIndices: number[];
+}
+
+const staticLineCache = new Map<string, StaticLineCache>();
+const miniNotationCache = new Map<string, { steps: MiniStepToken[]; isSlowCycle: boolean; totalSteps: number }>();
+
 /**
  * Parses mini-notation string content (e.g. "~ snare ~ snare", "kick*4", "<0 3 [5 7] 10>")
  * into sequential or slow-cycling step tokens with character offsets and phase ranges.
  */
 export function parseMiniNotation(content: string): { steps: MiniStepToken[]; isSlowCycle: boolean; totalSteps: number } {
+  const cached = miniNotationCache.get(content);
+  if (cached) return cached;
+
   const trimmed = content.trim();
-  if (!trimmed) return { steps: [], isSlowCycle: false, totalSteps: 0 };
+  if (!trimmed) {
+    const empty = { steps: [], isSlowCycle: false, totalSteps: 0 };
+    miniNotationCache.set(content, empty);
+    return empty;
+  }
 
   const isAngleBracket = trimmed.startsWith('<') && trimmed.endsWith('>');
   const innerContent = isAngleBracket ? trimmed.slice(1, -1).trim() : trimmed;
@@ -106,7 +126,9 @@ export function parseMiniNotation(content: string): { steps: MiniStepToken[]; is
   }
 
   if (rawTokens.length === 0) {
-    return { steps: [], isSlowCycle: false, totalSteps: 0 };
+    const empty = { steps: [], isSlowCycle: false, totalSteps: 0 };
+    miniNotationCache.set(content, empty);
+    return empty;
   }
 
   // Handle single token with multiplier: e.g. "kick*4" or "hat*8"
@@ -128,7 +150,9 @@ export function parseMiniNotation(content: string): { steps: MiniStepToken[]; is
         cycleStepIndex: s
       });
     }
-    return { steps, isSlowCycle: false, totalSteps: mult };
+    const res = { steps, isSlowCycle: false, totalSteps: mult };
+    miniNotationCache.set(content, res);
+    return res;
   }
 
   // Multi-token sequence
@@ -150,19 +174,18 @@ export function parseMiniNotation(content: string): { steps: MiniStepToken[]; is
     });
   }
 
-  return { steps, isSlowCycle: isAngleBracket, totalSteps: totalTokens };
+  const res = { steps, isSlowCycle: isAngleBracket, totalSteps: totalTokens };
+  miniNotationCache.set(content, res);
+  return res;
 }
 
 /**
- * Analyzes a single line of Strudel code, tokenizes syntax, and computes active step cursors
+ * Parses static structure of line once and caches it
  */
-export function analyzePatternLine(
-  lineText: string,
-  lineNumber: number,
-  cycle: number,
-  phase: number,
-  isPlaying: boolean
-): ParsedLine {
+function getStaticLineData(lineText: string): StaticLineCache {
+  const cached = staticLineCache.get(lineText);
+  if (cached) return cached;
+
   const lower = lineText.toLowerCase();
 
   // Detect sound category
@@ -197,16 +220,13 @@ export function analyzePatternLine(
 
   // Tokenize the line
   const tokens: SyntaxToken[] = [];
+  const miniTokenIndices: number[] = [];
   const regex = /(\/\/[^\n]*)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)|(\b(?:stack|seq|cat|arrange|s|sound|n|note|gain|jux|rev|off|every|ply|lpf|lpq|hpf|bpf|pan|delay|delaytime|delayfeedback|room|crush|coarse|shape|distort|vowel|chop|speed|fast|slow|sometimes|rarely|often|degradeBy|sine|range|add|mul)\b)|(\b\d+(?:\.\d+)?\b)|([(),.=>*\/+\-\[\]{}<>])/g;
 
   let lastIndex = 0;
   let match: RegExpExecArray | null;
-
-  let lineTotalSubdivisions = 4;
-  let lineActiveStepIndex = 0;
-  let lineIsTriggering = false;
-  let lineActiveTokenText: string | null = null;
-  let lineHasPattern = false;
+  let totalSubdivisions = 4;
+  let hasPattern = false;
 
   while ((match = regex.exec(lineText)) !== null) {
     if (match.index > lastIndex) {
@@ -221,66 +241,21 @@ export function analyzePatternLine(
     if (comment) {
       tokens.push({ text: comment, type: 'comment', color: '#64748b' });
     } else if (stringLit) {
-      lineHasPattern = true;
+      hasPattern = true;
       const strContent = stringLit.slice(1, -1);
       const parsedMini = parseMiniNotation(strContent);
 
-      let activeStepInfo: SyntaxToken['activeStep'] = undefined;
-
-      if (parsedMini.steps.length > 0 && isPlaying) {
-        lineTotalSubdivisions = Math.max(lineTotalSubdivisions, parsedMini.totalSteps);
-
-        if (parsedMini.isSlowCycle) {
-          // 1 item per cycle for <a b c>
-          const cycleInt = Math.floor(cycle);
-          const activeIndex = ((cycleInt % parsedMini.totalSteps) + parsedMini.totalSteps) % parsedMini.totalSteps;
-          const activeStep = parsedMini.steps[activeIndex];
-
-          if (activeStep) {
-            lineActiveStepIndex = activeIndex;
-            lineActiveTokenText = activeStep.text;
-            lineIsTriggering = !activeStep.isRest;
-
-            activeStepInfo = {
-              currentStep: activeIndex,
-              totalSteps: parsedMini.totalSteps,
-              activeText: activeStep.text,
-              isRest: activeStep.isRest,
-              startChar: activeStep.startChar,
-              endChar: activeStep.endChar
-            };
-          }
-        } else {
-          // Subdivisions per cycle based on normalized phase
-          const activeStep = parsedMini.steps.find(
-            (s) => phase >= s.stepRange[0] && phase < s.stepRange[1]
-          ) || parsedMini.steps[parsedMini.steps.length - 1];
-
-          if (activeStep) {
-            const stepIdx = activeStep.cycleStepIndex ?? Math.floor(phase * parsedMini.totalSteps);
-            lineActiveStepIndex = stepIdx;
-            lineActiveTokenText = activeStep.text;
-            lineIsTriggering = !activeStep.isRest;
-
-            activeStepInfo = {
-              currentStep: stepIdx,
-              totalSteps: parsedMini.totalSteps,
-              activeText: activeStep.text,
-              isRest: activeStep.isRest,
-              startChar: activeStep.startChar,
-              endChar: activeStep.endChar
-            };
-          }
-        }
+      if (parsedMini.totalSteps > 0) {
+        totalSubdivisions = Math.max(totalSubdivisions, parsedMini.totalSteps);
       }
 
+      miniTokenIndices.push(tokens.length);
       tokens.push({
         text: stringLit,
         type: 'string',
         color: soundColor,
         isMiniString: true,
         miniSteps: parsedMini.steps,
-        activeStep: activeStepInfo
       });
     } else if (keyword) {
       const isMethod = ['jux', 'rev', 'off', 'every', 'ply', 'lpf', 'lpq', 'hpf', 'pan', 'delay', 'room', 'crush', 'coarse', 'shape', 'vowel', 'chop'].includes(keyword);
@@ -298,7 +273,6 @@ export function analyzePatternLine(
     lastIndex = regex.lastIndex;
   }
 
-  // Trailing text
   if (lastIndex < lineText.length) {
     tokens.push({
       text: lineText.slice(lastIndex),
@@ -306,16 +280,102 @@ export function analyzePatternLine(
     });
   }
 
+  const staticData: StaticLineCache = {
+    soundType,
+    soundColor,
+    tokens,
+    totalSubdivisions,
+    hasPattern,
+    miniTokenIndices
+  };
+
+  staticLineCache.set(lineText, staticData);
+  return staticData;
+}
+
+/**
+ * Analyzes a single line of Strudel code with ultra-fast cached static tokens
+ * and computes instant, jitter-free active step cursors.
+ */
+export function analyzePatternLine(
+  lineText: string,
+  lineNumber: number,
+  cycle: number,
+  phase: number,
+  isPlaying: boolean
+): ParsedLine {
+  const staticData = getStaticLineData(lineText);
+
+  let lineActiveStepIndex = 0;
+  let lineIsTriggering = false;
+  let lineActiveTokenText: string | null = null;
+
+  // Clone tokens array shallowly so we can attach real-time activeStep without re-parsing
+  const tokens = staticData.tokens.map(t => ({ ...t }));
+
+  if (isPlaying && staticData.hasPattern) {
+    for (const tokenIdx of staticData.miniTokenIndices) {
+      const tok = tokens[tokenIdx];
+      if (!tok || !tok.miniSteps || tok.miniSteps.length === 0) continue;
+
+      const steps = tok.miniSteps;
+      const totalSteps = steps.length;
+      const isSlowCycle = steps[0]?.text !== undefined && steps.length > 0 && tok.text.includes('<');
+
+      if (isSlowCycle) {
+        const cycleInt = Math.floor(cycle);
+        const activeIndex = ((cycleInt % totalSteps) + totalSteps) % totalSteps;
+        const activeStep = steps[activeIndex];
+
+        if (activeStep) {
+          lineActiveStepIndex = activeIndex;
+          lineActiveTokenText = activeStep.text;
+          lineIsTriggering = !activeStep.isRest;
+
+          tok.activeStep = {
+            currentStep: activeIndex,
+            totalSteps,
+            activeText: activeStep.text,
+            isRest: activeStep.isRest,
+            startChar: activeStep.startChar,
+            endChar: activeStep.endChar
+          };
+        }
+      } else {
+        // Fast binary search / range find across phase
+        const activeStep = steps.find(
+          (s) => phase >= s.stepRange[0] && phase < s.stepRange[1]
+        ) || steps[steps.length - 1];
+
+        if (activeStep) {
+          const stepIdx = activeStep.cycleStepIndex ?? Math.floor(phase * totalSteps);
+          lineActiveStepIndex = stepIdx;
+          lineActiveTokenText = activeStep.text;
+          lineIsTriggering = !activeStep.isRest;
+
+          tok.activeStep = {
+            currentStep: stepIdx,
+            totalSteps,
+            activeText: activeStep.text,
+            isRest: activeStep.isRest,
+            startChar: activeStep.startChar,
+            endChar: activeStep.endChar
+          };
+        }
+      }
+    }
+  }
+
   return {
     lineNumber,
     rawText: lineText,
     tokens,
-    soundType,
-    soundColor,
-    totalSubdivisions: lineTotalSubdivisions,
+    soundType: staticData.soundType,
+    soundColor: staticData.soundColor,
+    totalSubdivisions: staticData.totalSubdivisions,
     activeStepIndex: lineActiveStepIndex,
     isTriggering: isPlaying && lineIsTriggering,
     activeTokenText: lineActiveTokenText,
-    hasPattern: lineHasPattern
+    hasPattern: staticData.hasPattern
   };
 }

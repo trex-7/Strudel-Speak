@@ -414,21 +414,28 @@ class StrudelService {
 
         if (win && typeof win.getCycle === 'function') {
           cycle = win.getCycle();
+        } else if (win && typeof win.getTime === 'function') {
+          const t = win.getTime();
+          cycle = typeof t === 'number' ? t * this.cps : 0;
         } else {
-          // Fallback cycle calculation: elapsed time * cps
-          const elapsedSec = (performance.now() - this.playStartTime) / 1000;
-          cycle = elapsedSec * this.cps;
+          // Accurate audioContext or performance timer reference
+          const audioCtx = win?.getAudioContext?.() || win?.audioContext;
+          if (audioCtx && audioCtx.currentTime > 0) {
+            cycle = audioCtx.currentTime * this.cps;
+          } else {
+            const elapsedSec = (performance.now() - this.playStartTime) / 1000;
+            cycle = elapsedSec * this.cps;
+          }
         }
 
         if (typeof cycle === 'number' && !isNaN(cycle)) {
-          const phase = ((cycle % 1) + 1) % 1; // 0.000 to 0.999
+          const phase = ((cycle % 1) + 1) % 1; // 0.0000 to 0.9999
           const beat = Math.floor(phase * 4) + 1; // 1, 2, 3, 4
           const step16 = Math.floor(phase * 16); // 0 to 15
           const step8 = Math.floor(phase * 8); // 0 to 7
-          const bpm = Math.round(this.cps * 60 * 4); // or cps * 120
 
           const info: CycleInfo = {
-            cycle: Number(cycle.toFixed(2)),
+            cycle: cycle, // Preserve full precision without lossy toFixed string conversion
             phase,
             beat,
             step16,

@@ -15,7 +15,7 @@ interface LiveTrackStripProps {
   onMemoryLearned?: (count: number) => void;
 }
 
-export const LiveTrackStrip: React.FC<LiveTrackStripProps> = ({
+export const LiveTrackStrip: React.FC<LiveTrackStripProps> = React.memo(({
   code,
   onChange,
   isPlaying,
@@ -449,6 +449,18 @@ export const LiveTrackStrip: React.FC<LiveTrackStripProps> = ({
                           🎛️ DSP
                         </button>
 
+                        {(track.soundType === 'sub' || track.soundType === 'acid' || /moog|bass|sub|sawtooth/i.test(track.rawCode)) && (
+                          <button
+                            type="button"
+                            onClick={() => handleInstantQuickFix(track, 'Bass notes are sustaining and overlapping into muddy rumble, add .clip(1).cut(1)')}
+                            disabled={isFixing}
+                            className="px-1.5 py-0.5 rounded bg-[#131625] hover:bg-[#1d233a] border border-amber-800/60 text-[9px] text-amber-300 hover:text-amber-100 transition-colors"
+                            title="Fix bass overlap: enforce monophonic choking (.cut(1)) and duration clipping (.clip(1))"
+                          >
+                            🎸 Choke
+                          </button>
+                        )}
+
                         <button
                           type="button"
                           onClick={() => handleInstantQuickFix(track, 'Rhythm is out of sync or wrong speed')}
@@ -493,4 +505,4 @@ export const LiveTrackStrip: React.FC<LiveTrackStripProps> = ({
       )}
     </div>
   );
-};
+});

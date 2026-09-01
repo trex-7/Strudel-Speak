@@ -77,24 +77,56 @@ class EmbeddedSoundBankService {
     }
 
     // Register with Strudel window environment
-    const registrationMap: Record<string, string> = {};
+    // Strudel supports pitched sample dictionaries { instrumentName: { rootNote: url } }
+    // which allows note() and n() to calculate perfect semitone offsets.
+    // Tuned +3 semitones (Eb root) to match exact concert pitch & scale definitions.
+    const pitchedSoundRoots: Record<string, string> = {
+      moog: 'eb2',
+      bass: 'eb2',
+      analogbass: 'eb2',
+      subbass: 'eb2',
+      acid: 'eb2',
+      tb303: 'eb2',
+      '303': 'eb2',
+      acidbass: 'eb2',
+      sub: 'eb2',
+      sub808: 'eb2',
+      '808': 'eb2',
+      saw: 'eb3',
+      supersaw: 'eb3',
+      lead: 'eb3',
+      juno: 'eb3',
+      chord: 'eb3',
+      pad: 'eb3',
+      stab: 'eb3',
+      rave: 'eb3',
+      hoover: 'eb3',
+      pluck: 'eb4',
+      synthpluck: 'eb4',
+      bell: 'eb4'
+    };
+
+    const registrationMap: Record<string, any> = {};
     this.audioUrlCache.forEach((url, name) => {
-      registrationMap[name] = url;
+      const root = pitchedSoundRoots[name.toLowerCase()];
+      if (root) {
+        registrationMap[name] = { [root]: url };
+      } else {
+        registrationMap[name] = url;
+      }
     });
 
     try {
       if (typeof win.samples === 'function') {
         win.samples(registrationMap);
-        console.log('[EmbeddedSoundBank] Registered all demo sounds via win.samples()');
+        console.log('[EmbeddedSoundBank] Registered all demo sounds & tuned root maps via win.samples()');
       }
 
       if (typeof win.register === 'function') {
-        Object.entries(registrationMap).forEach(([name, url]) => {
+        this.audioUrlCache.forEach((url, name) => {
           try {
             win.register(name, url);
-          } catch (e) {
-            // ignore
-          }
+          } catch (e) {}
         });
       }
 
@@ -194,9 +226,9 @@ class EmbeddedSoundBankService {
         const sine = Math.sin(2 * Math.PI * pitchEnv * t);
         sampleVal = (sine * 0.9 + click) * ampEnv;
       }
-      // 2. 808 SUB BASS KICK
+      // 2. 808 SUB BASS KICK (Tuned +3 semitones)
       else if (s === '808' || s === '808bd' || s === 'subkick' || s === 'sub') {
-        const pitchEnv = 110 * Math.exp(-t * 22) + 40;
+        const pitchEnv = 130.8 * Math.exp(-t * 22) + 47.6;
         const ampEnv = Math.exp(-t * 3.8);
         const sine = Math.sin(2 * Math.PI * pitchEnv * t);
         const subHarmonic = Math.sin(2 * Math.PI * (pitchEnv * 0.5) * t) * 0.2;
@@ -257,63 +289,65 @@ class EmbeddedSoundBankService {
         const ring = Math.sin(2 * Math.PI * 5200 * t) * 0.3;
         sampleVal = (noise * 0.8 + ring) * Math.exp(-t * 3.5);
       }
-      // 11. TB-303 ACID SYNTH BASS
+      // 11. TB-303 ACID SYNTH BASS (Tuned +3 semitones: Eb2 @ 77.7817 Hz)
       else if (s === 'acid' || s === 'tb303' || s === '303' || s === 'acidbass') {
-        const baseFreq = 65.41; // C2
-        const cutoff = 400 + 2200 * Math.exp(-t * 12);
-        // Sawtooth wave approximation with 4 harmonics
+        const baseFreq = 77.7817; // Eb2 (+3 semitones)
+        const cutoff = 452 + 3090 * Math.exp(-t * 15);
+        // Sawtooth wave approximation with 8 harmonics
         let saw = 0;
-        for (let h = 1; h <= 6; h++) {
+        for (let h = 1; h <= 8; h++) {
           const harmonicFreq = baseFreq * h;
           if (harmonicFreq < cutoff) {
             saw += (1 / h) * Math.sin(2 * Math.PI * harmonicFreq * t);
           }
         }
         // Resonant peak
-        const resonance = Math.sin(2 * Math.PI * cutoff * t) * 0.4 * Math.exp(-t * 10);
-        sampleVal = (saw * 0.8 + resonance) * Math.exp(-t * 4);
+        const resonance = Math.sin(2 * Math.PI * cutoff * t) * 0.45 * Math.exp(-t * 12);
+        const env = Math.exp(-t * 7.5);
+        sampleVal = (saw * 0.85 + resonance) * env;
       }
-      // 12. MOOG SUB BASS
+      // 12. MOOG ANALOG SUB BASS (Tuned +3 semitones: Eb2 @ 77.7817 Hz, calibrated punchy decay)
       else if (s === 'moog' || s === 'bass' || s === 'analogbass' || s === 'subbass') {
-        const f0 = 55; // A1
+        const f0 = 77.7817; // Eb2 (+3 semitones)
         const osc1 = Math.sin(2 * Math.PI * f0 * t);
-        const osc2 = (Math.sin(2 * Math.PI * (f0 * 1.004) * t) > 0 ? 0.4 : -0.4); // Square sub
-        const env = Math.exp(-t * 5);
-        sampleVal = (osc1 * 0.7 + osc2 * 0.3) * env;
+        const osc2 = (Math.sin(2 * Math.PI * (f0 * 1.002) * t) > 0 ? 0.35 : -0.35); // Slight detuned warm sub
+        const punch = t < 0.008 ? Math.sin(2 * Math.PI * 214 * t) * Math.exp(-t * 200) * 0.3 : 0;
+        const env = Math.exp(-t * 8.5); // Tight punchy decay prevents muddy overlap
+        sampleVal = (osc1 * 0.7 + osc2 * 0.3 + punch) * env * 0.95;
       }
-      // 13. SUPERSAW LEAD
+      // 13. SUPERSAW LEAD (Tuned +3 semitones: Eb3 @ 155.5635 Hz)
       else if (s === 'saw' || s === 'supersaw' || s === 'lead') {
-        const f0 = 220; // A3
-        const detunes = [0.985, 0.993, 1.0, 1.008, 1.016];
+        const f0 = 155.5635; // Eb3 (+3 semitones)
+        const detunes = [0.988, 0.994, 1.0, 1.006, 1.012];
         let superSaw = 0;
         detunes.forEach((d) => {
           const phase = (f0 * d * t) % 1;
           superSaw += (2 * phase - 1) * 0.2;
         });
-        sampleVal = superSaw * Math.exp(-t * 3);
+        sampleVal = superSaw * Math.exp(-t * 4.5);
       }
-      // 14. JUNO MINOR 9TH CHORD STAB
+      // 14. JUNO MINOR 9TH CHORD STAB (Tuned +3 semitones: Ebm9 root @ 155.56 Hz)
       else if (s === 'juno' || s === 'chord' || s === 'pad' || s === 'stab') {
-        // Dm9: D3 (146.83), F3 (174.61), A3 (220.0), C4 (261.63), E4 (329.63)
-        const freqs = [146.83, 174.61, 220.0, 261.63, 329.63];
+        // Ebm9: Eb3 (155.56), Gb3 (184.99), Bb3 (233.08), Db4 (277.18), F4 (349.23)
+        const freqs = [155.56, 184.99, 233.08, 277.18, 349.23];
         let chord = 0;
         freqs.forEach((f) => {
           chord += Math.sin(2 * Math.PI * f * t) * 0.2;
         });
-        sampleVal = chord * Math.exp(-t * 2.8);
+        sampleVal = chord * Math.exp(-t * 3.5);
       }
-      // 15. RAVE HOOVER
+      // 15. RAVE HOOVER (Tuned +3 semitones: Eb3 @ 155.56 Hz)
       else if (s === 'rave' || s === 'hoover' || s === 'ravestab') {
-        const pitchBend = 160 * (1 + 0.3 * Math.sin(2 * Math.PI * 4 * t)) * Math.exp(-t * 1.5);
+        const pitchBend = 155.56 * (1 + 0.25 * Math.sin(2 * Math.PI * 5 * t)) * Math.exp(-t * 1.8);
         const osc1 = Math.sin(2 * Math.PI * pitchBend * t);
         const osc2 = Math.sin(2 * Math.PI * (pitchBend * 1.5) * t) * 0.4;
-        sampleVal = (osc1 + osc2) * 0.7 * Math.exp(-t * 2.5);
+        sampleVal = (osc1 + osc2) * 0.7 * Math.exp(-t * 3.5);
       }
-      // 16. PLUCK / BELL
+      // 16. PLUCK / BELL (Tuned +3 semitones: Eb4 @ 311.1270 Hz)
       else if (s === 'pluck' || s === 'synthpluck' || s === 'bell') {
-        const f0 = 440;
-        const mod = Math.sin(2 * Math.PI * f0 * 2 * t) * Math.exp(-t * 28) * 3;
-        sampleVal = Math.sin(2 * Math.PI * f0 * t + mod) * Math.exp(-t * 8);
+        const f0 = 311.1270; // Eb4 (+3 semitones)
+        const mod = Math.sin(2 * Math.PI * f0 * 2 * t) * Math.exp(-t * 32) * 3;
+        sampleVal = Math.sin(2 * Math.PI * f0 * t + mod) * Math.exp(-t * 9.0);
       }
       // 17. RISER / SWEEP
       else if (s === 'riser' || s === 'sweep' || s === 'uplifter' || s === 'buildup') {

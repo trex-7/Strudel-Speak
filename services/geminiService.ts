@@ -420,7 +420,34 @@ ${currentPattern}
       }
     }
 
-    // 2. jux(rev) quotes or missing rev
+    // 2. Bass Overlap / Sustain / Choke / Muddy issues
+    if (
+      combinedReason.includes('bass') || 
+      combinedReason.includes('sustain') || 
+      combinedReason.includes('overlap') || 
+      combinedReason.includes('muddy') || 
+      combinedReason.includes('choke') || 
+      combinedReason.includes('bleed') ||
+      /s\(\s*["'](?:moog|bass|analogbass|subbass|sawbass|acid|sub|sawtooth|gm_synth_bass_1)["']\s*\)/.test(lineContent)
+    ) {
+      if (!lineContent.includes('.clip(') && !lineContent.includes('.cut(')) {
+        // Surgically insert .clip(1).cut(1) after s("...") or scale(...)
+        if (/\.s\([^)]+\)/.test(lineContent)) {
+          fixedLine = lineContent.replace(/(\.s\([^)]+\))/, '$1.clip(1).cut(1)');
+        } else if (/\.scale\([^)]+\)/.test(lineContent)) {
+          fixedLine = lineContent.replace(/(\.scale\([^)]+\))/, '$1.clip(1).cut(1)');
+        } else if (lineContent.includes('.gain(')) {
+          fixedLine = lineContent.replace(/(\.gain\([^)]+\))/, '.clip(1).cut(1)$1');
+        } else {
+          fixedLine = `${lineContent.trimEnd()}.clip(1).cut(1)`;
+        }
+        diagnosis = 'Bass notes were sustaining and overlapping across steps without voice choking (.cut(1)) or step duration clipping (.clip(1)).';
+        explanation = 'Enforced monophonic choking (.cut(1)) and step clipping (.clip(1)) on the bassline to eliminate muddy overlapping low-end rumble.';
+        suggestedTag = 'bass-anti-overlap';
+      }
+    }
+
+    // 3. jux(rev) quotes or missing rev
     if (combinedReason.includes('jux') || lineContent.includes('jux(')) {
       fixedLine = lineContent.replace(/jux\(["']?rev["']?\)/g, 'jux(rev)');
       diagnosis = 'Ensured .jux(rev) uses the unquoted function identifier for stereo inversion.';
