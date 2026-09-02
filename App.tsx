@@ -8,6 +8,7 @@ import { CommandBar } from './components/CommandBar';
 import { PatternEffectsWorkshop } from './components/PatternEffectsWorkshop';
 import { LearningMemoryModal } from './components/LearningMemoryModal';
 import { LineDiagnosticModal } from './components/LineDiagnosticModal';
+import { CountdownTimer } from './components/CountdownTimer';
 import { PatternEffectDemo } from './patternEffects';
 import { getRandomInitialPattern, DEFAULT_PATTERNS } from './constants';
 
@@ -35,10 +36,11 @@ export const App: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [learnedBanner, setLearnedBanner] = useState<string | null>(null);
 
-  // Guest Mode State (Default launched with 5 minute timeout)
+  // Guest Mode State (Default launched with 5 minute countdown timeout)
   const [isGuestMode, setIsGuestMode] = useState(true);
   const [guestSecondsRemaining, setGuestSecondsRemaining] = useState(GUEST_SESSION_DURATION);
   const [isGuestTimedOut, setIsGuestTimedOut] = useState(false);
+  const [isTimerPaused, setIsTimerPaused] = useState(false);
 
   // Initialize pattern in Strudel engine on mount
   useEffect(() => {
@@ -51,7 +53,7 @@ export const App: React.FC = () => {
 
   // 5-Minute Guest Mode Countdown Timer
   useEffect(() => {
-    if (!isGuestMode || isGuestTimedOut) return;
+    if (!isGuestMode || isGuestTimedOut || isTimerPaused) return;
 
     const timer = setInterval(() => {
       setGuestSecondsRemaining((prev) => {
@@ -66,13 +68,19 @@ export const App: React.FC = () => {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [isGuestMode, isGuestTimedOut]);
+  }, [isGuestMode, isGuestTimedOut, isTimerPaused]);
 
-  // Format seconds to mm:ss
-  const formatTimeRemaining = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  // Toggle pause on 5 minute timer
+  const handleTogglePauseTimer = () => {
+    setIsTimerPaused((prev) => !prev);
+  };
+
+  // Reset 5 minute timer
+  const handleResetTimer = () => {
+    setGuestSecondsRemaining(GUEST_SESSION_DURATION);
+    setIsGuestTimedOut(false);
+    setIsTimerPaused(false);
+    setErrorMessage(null);
   };
 
   // Play / Stop Toggle (Always functional - never blocked by guest timer)
@@ -217,32 +225,17 @@ export const App: React.FC = () => {
               Live Coding
             </span>
 
-            {/* Guest Mode Status & 5-Minute Timer Badge */}
-            {isGuestMode && (
-              <div
-                onClick={() => setShowKeyModal(true)}
-                className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold border transition-all cursor-pointer ${
-                  isGuestTimedOut
-                    ? 'bg-amber-950/90 border-amber-600 text-amber-300'
-                    : guestSecondsRemaining < 60
-                    ? 'bg-rose-950/80 border-rose-500 text-rose-300 animate-pulse'
-                    : 'bg-indigo-950/80 border-indigo-700/80 text-indigo-300'
-                }`}
-                title={
-                  isGuestTimedOut
-                    ? 'Guest AI trial paused (5 min limit). Manual live-coding and audio playback are active. Click to enter your Gemini API key.'
-                    : `Guest AI trial: ${formatTimeRemaining(guestSecondsRemaining)} remaining`
-                }
-              >
-                <UserCheck size={11} className={isGuestTimedOut ? 'text-amber-400' : 'text-indigo-400'} />
-                <span className="font-bold">Guest AI</span>
-                <span className="opacity-60">|</span>
-                <Clock size={10} className={isGuestTimedOut ? 'text-amber-400' : 'text-indigo-300'} />
-                <span className="tabular-nums">
-                  {isGuestTimedOut ? 'Paused' : formatTimeRemaining(guestSecondsRemaining)}
-                </span>
-              </div>
-            )}
+            {/* 5-Minute Countdown Timer Widget */}
+            <CountdownTimer
+              secondsRemaining={guestSecondsRemaining}
+              totalDuration={GUEST_SESSION_DURATION}
+              isPaused={isTimerPaused}
+              isTimedOut={isGuestTimedOut}
+              onTogglePause={handleTogglePauseTimer}
+              onReset={handleResetTimer}
+              onOpenKeyModal={() => setShowKeyModal(true)}
+              isCustomKeyActive={!isGuestMode || geminiService.hasKey()}
+            />
           </div>
         </div>
 
