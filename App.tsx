@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Square, Sparkles, Key, Volume2, AlertCircle, RefreshCw, Radio, BookOpen, Brain, Layers, Crosshair, Wrench, Copy, Check, RotateCcw, Dices, Shuffle, Clock, UserCheck, ShieldAlert, LogOut } from 'lucide-react';
+import { Play, Square, Sparkles, Key, Volume2, AlertCircle, RefreshCw, Radio, BookOpen, Brain, Layers, Crosshair, Wrench, Copy, Check, RotateCcw, Dices, Shuffle, Clock, UserCheck, ShieldAlert, LogOut, Lock, Unlock } from 'lucide-react';
 import { strudelService } from './services/strudelService';
 import { geminiService } from './services/geminiService';
 import { learningMemoryService } from './services/learningMemoryService';
@@ -24,7 +24,16 @@ export const App: React.FC = () => {
     `[${initialPreset.genre}] ${initialPreset.explanation}`
   );
   const [visualHint, setVisualHint] = useState(initialPreset.visualHint);
+  const UNLIMITED_AI_PASSWORD = '2106';
+
   const [showKeyModal, setShowKeyModal] = useState(false);
+  const [showUnlockModal, setShowUnlockModal] = useState(false);
+  const [passcodeInput, setPasscodeInput] = useState('');
+  const [passcodeError, setPasscodeError] = useState<string | null>(null);
+  const [isUnlockedWithPassword, setIsUnlockedWithPassword] = useState<boolean>(() => {
+    return localStorage.getItem('strudelspeak_unlocked_pw') === '2106';
+  });
+
   const [showWorkshopModal, setShowWorkshopModal] = useState(false);
   const [showMemoryModal, setShowMemoryModal] = useState(false);
   const [diagnosticLine, setDiagnosticLine] = useState<{ index: number; content: string } | null>(null);
@@ -36,8 +45,10 @@ export const App: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [learnedBanner, setLearnedBanner] = useState<string | null>(null);
 
-  // Guest Mode State (Default launched with 5 minute countdown timeout)
-  const [isGuestMode, setIsGuestMode] = useState(true);
+  // Guest Mode State (Default launched with 5 minute countdown timeout unless unlocked by password 2106)
+  const [isGuestMode, setIsGuestMode] = useState<boolean>(() => {
+    return localStorage.getItem('strudelspeak_unlocked_pw') !== '2106';
+  });
   const [guestSecondsRemaining, setGuestSecondsRemaining] = useState(GUEST_SESSION_DURATION);
   const [isGuestTimedOut, setIsGuestTimedOut] = useState(false);
   const [isTimerPaused, setIsTimerPaused] = useState(false);
@@ -158,11 +169,11 @@ export const App: React.FC = () => {
   const handleTranslateEnglish = async (englishPrompt: string) => {
     if (!englishPrompt.trim() || isTranslating) return;
 
-    // Check if Guest AI is timed out and no personal API key is configured
-    if (isGuestMode && isGuestTimedOut && !geminiService.hasKey()) {
-      setShowKeyModal(true);
+    // Check if Guest AI is timed out and not unlocked with password 2106 or personal API key
+    if (isGuestMode && isGuestTimedOut && !isUnlockedWithPassword && !geminiService.hasKey()) {
+      setShowUnlockModal(true);
       setErrorMessage(
-        'Guest AI trial limit (5 minutes) reached to limit public server spend. Manual live-coding, audio playback, presets, and DSP effects remain 100% active! Enter your Gemini API key to continue AI prompting.'
+        'Guest AI 5-minute trial reached to limit public server spend. Manual live-coding, synthesis, presets, and audio playback remain 100% active! Enter passcode (pw=2106) for unlimited AI.'
       );
       return;
     }
@@ -195,12 +206,30 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleUnlockPasscode = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (passcodeInput.trim() === UNLIMITED_AI_PASSWORD) {
+      setIsGuestMode(false);
+      setIsGuestTimedOut(false);
+      setIsUnlockedWithPassword(true);
+      localStorage.setItem('strudelspeak_unlocked_pw', UNLIMITED_AI_PASSWORD);
+      setShowUnlockModal(false);
+      setPasscodeError(null);
+      setErrorMessage(null);
+      setLearnedBanner('Unlimited AI Mode Unlocked (Passcode 2106 Verified)');
+      setTimeout(() => setLearnedBanner(null), 5000);
+    } else {
+      setPasscodeError('Incorrect passcode. Enter the valid passcode (2106) to unlock unlimited AI.');
+    }
+  };
+
   const handleSaveApiKey = (e: React.FormEvent) => {
     e.preventDefault();
     if (apiKeyInput.trim()) {
       geminiService.updateKey(apiKeyInput.trim());
       setIsGuestMode(false);
       setIsGuestTimedOut(false);
+      setIsUnlockedWithPassword(true);
       setShowKeyModal(false);
       setErrorMessage(null);
     }
@@ -233,8 +262,12 @@ export const App: React.FC = () => {
               isTimedOut={isGuestTimedOut}
               onTogglePause={handleTogglePauseTimer}
               onReset={handleResetTimer}
-              onOpenKeyModal={() => setShowKeyModal(true)}
-              isCustomKeyActive={!isGuestMode || geminiService.hasKey()}
+              onOpenUnlockModal={() => {
+                setPasscodeInput('');
+                setPasscodeError(null);
+                setShowUnlockModal(true);
+              }}
+              isUnlockedWithPassword={isUnlockedWithPassword || !isGuestMode}
             />
           </div>
         </div>
@@ -343,19 +376,31 @@ export const App: React.FC = () => {
             )}
           </button>
 
-          {/* Key / Settings */}
+          {/* Passcode Unlock / Lock State Button */}
           <button
-            onClick={() => setShowKeyModal(true)}
-            className="p-1 text-gray-400 hover:text-white rounded-md bg-[#151926] hover:bg-[#1f2538] border border-gray-800 transition-colors"
-            title="Configure Gemini API Key"
+            onClick={() => {
+              setPasscodeInput('');
+              setPasscodeError(null);
+              setShowUnlockModal(true);
+            }}
+            className={`p-1 rounded-md border transition-all ${
+              isUnlockedWithPassword || !isGuestMode
+                ? 'bg-emerald-950/80 text-emerald-300 hover:text-white border-emerald-700/60'
+                : 'text-amber-400 hover:text-amber-200 bg-[#151926] hover:bg-[#1f2538] border-amber-800/60'
+            }`}
+            title={
+              isUnlockedWithPassword || !isGuestMode
+                ? 'Unlimited AI Mode Active (Passcode 2106 Verified)'
+                : 'Enter Password (pw=2106) for Unlimited AI'
+            }
           >
-            <Key size={12} />
+            {isUnlockedWithPassword || !isGuestMode ? <Unlock size={12} /> : <Lock size={12} />}
           </button>
         </div>
       </header>
 
       {/* Guest Mode Expired Banner */}
-      {isGuestMode && isGuestTimedOut && (
+      {isGuestMode && isGuestTimedOut && !isUnlockedWithPassword && (
         <div className="bg-amber-950/90 border-b border-amber-800/80 px-4 py-2 text-xs text-amber-200 flex items-center justify-between shadow-md z-30">
           <div className="flex items-center gap-2">
             <ShieldAlert size={15} className="text-amber-400 flex-shrink-0" />
@@ -365,11 +410,15 @@ export const App: React.FC = () => {
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
-              onClick={() => setShowKeyModal(true)}
+              onClick={() => {
+                setPasscodeInput('');
+                setPasscodeError(null);
+                setShowUnlockModal(true);
+              }}
               className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white font-mono text-[11px] font-bold rounded transition-all shadow-sm active:scale-95 flex items-center gap-1"
             >
-              <Key size={11} />
-              <span>Enter API Key</span>
+              <Lock size={11} />
+              <span>Unlock Unlimited AI (pw=2106)</span>
             </button>
           </div>
         </div>
@@ -425,8 +474,12 @@ export const App: React.FC = () => {
             onTranslate={handleTranslateEnglish}
             isTranslating={isTranslating}
             onOpenWorkshop={() => setShowWorkshopModal(true)}
-            isGuestAiTimedOut={isGuestMode && isGuestTimedOut && !geminiService.hasKey()}
-            onOpenKeyModal={() => setShowKeyModal(true)}
+            isGuestAiTimedOut={isGuestMode && isGuestTimedOut && !isUnlockedWithPassword && !geminiService.hasKey()}
+            onOpenUnlockModal={() => {
+              setPasscodeInput('');
+              setPasscodeError(null);
+              setShowUnlockModal(true);
+            }}
           />
         </div>
       </main>
@@ -461,6 +514,83 @@ export const App: React.FC = () => {
         />
       )}
 
+      {/* Passcode Unlock Modal for Unlimited AI */}
+      {showUnlockModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-[#141724] border border-[#262c45] rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-amber-950/80 border border-amber-800 rounded-xl text-amber-400">
+                <Lock size={20} />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white font-mono">Unlock Unlimited AI</h3>
+                <p className="text-xs text-gray-400">Access password required to unlock unrestricted AI generation</p>
+              </div>
+            </div>
+
+            <form onSubmit={handleUnlockPasscode} className="space-y-4">
+              <div>
+                <label className="block text-xs font-mono text-gray-300 mb-1">
+                  Access Password (pw=2106)
+                </label>
+                <input
+                  type="password"
+                  value={passcodeInput}
+                  onChange={(e) => {
+                    setPasscodeInput(e.target.value);
+                    setPasscodeError(null);
+                  }}
+                  placeholder="Enter password (2106)..."
+                  className="w-full bg-[#0a0c14] border border-[#2a3047] rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-amber-500 font-mono tracking-wider"
+                  autoFocus
+                />
+                {passcodeError && (
+                  <p className="text-xs text-rose-400 mt-1.5 flex items-center gap-1">
+                    <AlertCircle size={12} />
+                    {passcodeError}
+                  </p>
+                )}
+              </div>
+
+              <div className="p-3 bg-amber-950/30 border border-amber-900/50 rounded-xl text-[11px] text-amber-300/90 leading-relaxed">
+                <strong>Public Quota Guard:</strong> Public guest sessions are capped at 5 minutes to prevent unwanted API quota spend. Entering the access password (<code>2106</code>) removes all timeouts and enables unlimited AI prompt synthesis.
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowUnlockModal(false);
+                    setShowKeyModal(true);
+                  }}
+                  className="text-xs text-gray-400 hover:text-white underline font-mono"
+                >
+                  Or enter Gemini API Key →
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowUnlockModal(false)}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold text-gray-400 hover:text-white hover:bg-gray-800 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!passcodeInput.trim()}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white transition-all shadow-md active:scale-95 flex items-center gap-1.5"
+                  >
+                    <Unlock size={12} />
+                    <span>Unlock Access</span>
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* API Key Modal */}
       {showKeyModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fadeIn">
@@ -485,8 +615,21 @@ export const App: React.FC = () => {
                 autoFocus
               />
 
-              <div className="flex items-center justify-end gap-2 pt-2">
-                {geminiService.hasKey() && (
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowKeyModal(false);
+                    setPasscodeInput('');
+                    setPasscodeError(null);
+                    setShowUnlockModal(true);
+                  }}
+                  className="text-xs text-amber-400 hover:text-amber-200 underline font-mono"
+                >
+                  ← Unlock with Passcode (2106)
+                </button>
+
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => setShowKeyModal(false)}
@@ -494,14 +637,14 @@ export const App: React.FC = () => {
                   >
                     Cancel
                   </button>
-                )}
-                <button
-                  type="submit"
-                  disabled={!apiKeyInput.trim()}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white transition-all shadow-md active:scale-95"
-                >
-                  Save & Start
-                </button>
+                  <button
+                    type="submit"
+                    disabled={!apiKeyInput.trim()}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white transition-all shadow-md active:scale-95"
+                  >
+                    Save & Start
+                  </button>
+                </div>
               </div>
             </form>
           </div>

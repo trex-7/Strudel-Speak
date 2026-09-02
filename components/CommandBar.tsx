@@ -7,7 +7,7 @@ interface CommandBarProps {
   onOpenWorkshop?: () => void;
   className?: string;
   isGuestAiTimedOut?: boolean;
-  onOpenKeyModal?: () => void;
+  onOpenUnlockModal?: () => void;
 }
 
 export const CommandBar: React.FC<CommandBarProps> = ({
@@ -16,7 +16,7 @@ export const CommandBar: React.FC<CommandBarProps> = ({
   onOpenWorkshop,
   className = '',
   isGuestAiTimedOut = false,
-  onOpenKeyModal,
+  onOpenUnlockModal,
 }) => {
   const [text, setText] = useState('');
   const [isListening, setIsListening] = useState(false);
@@ -201,7 +201,7 @@ export const CommandBar: React.FC<CommandBarProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (isGuestAiTimedOut) {
-      if (onOpenKeyModal) onOpenKeyModal();
+      if (onOpenUnlockModal) onOpenUnlockModal();
       return;
     }
     if (!text.trim() || isTranslating) return;
@@ -218,7 +218,7 @@ export const CommandBar: React.FC<CommandBarProps> = ({
         {isSupported && (
           <button
             type="button"
-            onClick={isGuestAiTimedOut ? onOpenKeyModal : toggleListening}
+            onClick={isGuestAiTimedOut ? onOpenUnlockModal : toggleListening}
             disabled={isTranslating}
             className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-all active:scale-95 shadow-sm ${
               isListening
@@ -229,7 +229,7 @@ export const CommandBar: React.FC<CommandBarProps> = ({
             }`}
             title={
               isGuestAiTimedOut
-                ? 'Guest AI paused. Click to enter your API key.'
+                ? 'Guest AI paused. Click to enter password for unlimited AI.'
                 : isListening
                 ? 'Listening live... Click to stop'
                 : 'Click to Speak English Command'
@@ -254,7 +254,7 @@ export const CommandBar: React.FC<CommandBarProps> = ({
             disabled={isTranslating}
             placeholder={
               isGuestAiTimedOut
-                ? 'Guest AI paused (5m limit). Enter your Gemini API key to unlock AI generation...'
+                ? 'Guest AI paused (5m limit). Enter password (pw=2106) to unlock unlimited AI...'
                 : isListening
                 ? `Listening... ${transcript ? `"${transcript}"` : 'Say your command in English...'}`
                 : 'Type or speak in English (e.g. "mute 909 kick", "add 303 acid bass", "speed up to 135 bpm")...'
@@ -273,12 +273,12 @@ export const CommandBar: React.FC<CommandBarProps> = ({
         {isGuestAiTimedOut ? (
           <button
             type="button"
-            onClick={onOpenKeyModal}
+            onClick={onOpenUnlockModal}
             className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all shadow-sm active:scale-95 flex-shrink-0"
-            title="Unlock AI generation with your own API key"
+            title="Unlock AI generation with passcode"
           >
-            <Key size={12} />
-            <span>Add Key</span>
+            <Lock size={12} />
+            <span>Unlock AI</span>
           </button>
         ) : (
           <button
@@ -309,10 +309,10 @@ export const CommandBar: React.FC<CommandBarProps> = ({
             <span>Guest AI paused to protect public spend. <strong>Live coding & audio playback remain 100% active.</strong></span>
           </div>
           <button
-            onClick={onOpenKeyModal}
+            onClick={onOpenUnlockModal}
             className="underline hover:text-amber-100 font-semibold ml-2 flex-shrink-0 text-[10px]"
           >
-            Unlock with Key →
+            Enter Password (2106) →
           </button>
         </div>
       )}

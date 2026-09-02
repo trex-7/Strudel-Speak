@@ -1,5 +1,5 @@
 import React from 'react';
-import { Clock, Pause, Play, RotateCcw, Key, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { Clock, Pause, Play, RotateCcw, Lock, Unlock, ShieldCheck, AlertTriangle } from 'lucide-react';
 
 interface CountdownTimerProps {
   secondsRemaining: number;
@@ -8,8 +8,8 @@ interface CountdownTimerProps {
   isTimedOut: boolean;
   onTogglePause: () => void;
   onReset: () => void;
-  onOpenKeyModal: () => void;
-  isCustomKeyActive?: boolean;
+  onOpenUnlockModal: () => void;
+  isUnlockedWithPassword?: boolean;
 }
 
 export const CountdownTimer: React.FC<CountdownTimerProps> = ({
@@ -19,21 +19,22 @@ export const CountdownTimer: React.FC<CountdownTimerProps> = ({
   isTimedOut,
   onTogglePause,
   onReset,
-  onOpenKeyModal,
-  isCustomKeyActive = false,
+  onOpenUnlockModal,
+  isUnlockedWithPassword = false,
 }) => {
   const mins = Math.floor(secondsRemaining / 60);
   const secs = secondsRemaining % 60;
   const formattedTime = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   const percentage = Math.max(0, Math.min(100, (secondsRemaining / totalDuration) * 100));
 
-  if (isCustomKeyActive) {
+  if (isUnlockedWithPassword) {
     return (
       <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-950/60 border border-emerald-700/60 text-emerald-300 font-mono text-[11px] shadow-sm">
         <ShieldCheck size={13} className="text-emerald-400" />
-        <span className="font-semibold">Unlimited Mode</span>
-        <span className="text-[9px] bg-emerald-900/60 text-emerald-200 px-1 rounded border border-emerald-600/40 font-bold">
-          API KEY
+        <span className="font-semibold">Unlimited AI</span>
+        <span className="text-[9px] bg-emerald-900/80 text-emerald-200 px-1.5 py-0.2 rounded border border-emerald-600/50 font-bold flex items-center gap-1">
+          <Unlock size={9} />
+          PASSCODE 2106
         </span>
       </div>
     );
@@ -113,11 +114,11 @@ export const CountdownTimer: React.FC<CountdownTimerProps> = ({
         </button>
 
         <button
-          onClick={onOpenKeyModal}
-          className="p-1 hover:bg-white/10 rounded text-gray-300 hover:text-white transition-colors"
-          title="Enter personal API Key for unlimited AI access"
+          onClick={onOpenUnlockModal}
+          className="p-1 hover:bg-amber-900/60 rounded text-amber-300 hover:text-amber-100 transition-colors border border-amber-700/30"
+          title="Enter password (pw=2106) for unlimited AI access"
         >
-          <Key size={11} />
+          <Lock size={11} />
         </button>
       </div>
     </div>
