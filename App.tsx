@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Play, Square, Sparkles, Key, Volume2, AlertCircle, RefreshCw, Radio, BookOpen, Brain, Layers, Crosshair, Wrench, Copy, Check, RotateCcw, Dices, Shuffle } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Play, Square, Sparkles, Key, Volume2, AlertCircle, RefreshCw, Radio, BookOpen, Brain, Layers, Crosshair, Wrench, Copy, Check, RotateCcw, Dices, Shuffle, Clock, UserCheck, ShieldAlert, LogOut } from 'lucide-react';
 import { strudelService } from './services/strudelService';
 import { geminiService } from './services/geminiService';
 import { learningMemoryService } from './services/learningMemoryService';
@@ -10,6 +10,8 @@ import { LearningMemoryModal } from './components/LearningMemoryModal';
 import { LineDiagnosticModal } from './components/LineDiagnosticModal';
 import { PatternEffectDemo } from './patternEffects';
 import { getRandomInitialPattern, DEFAULT_PATTERNS } from './constants';
+
+const GUEST_SESSION_DURATION = 5 * 60; // 5 minutes in seconds
 
 export const App: React.FC = () => {
   // Start on a random different default pattern at every launch
@@ -33,6 +35,11 @@ export const App: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [learnedBanner, setLearnedBanner] = useState<string | null>(null);
 
+  // Guest Mode State (Default launched with 5 minute timeout)
+  const [isGuestMode, setIsGuestMode] = useState(true);
+  const [guestSecondsRemaining, setGuestSecondsRemaining] = useState(GUEST_SESSION_DURATION);
+  const [isGuestTimedOut, setIsGuestTimedOut] = useState(false);
+
   // Initialize pattern in Strudel engine on mount
   useEffect(() => {
     strudelService.setPattern(code);
@@ -42,7 +49,33 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Play / Stop Toggle
+  // 5-Minute Guest Mode Countdown Timer
+  useEffect(() => {
+    if (!isGuestMode || isGuestTimedOut) return;
+
+    const timer = setInterval(() => {
+      setGuestSecondsRemaining((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          setIsGuestTimedOut(true);
+          // Keep audio playback and live coding running! Only disable AI requests.
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [isGuestMode, isGuestTimedOut]);
+
+  // Format seconds to mm:ss
+  const formatTimeRemaining = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Play / Stop Toggle (Always functional - never blocked by guest timer)
   const handlePlayToggle = async () => {
     try {
       if (isPlaying) {
@@ -117,6 +150,15 @@ export const App: React.FC = () => {
   const handleTranslateEnglish = async (englishPrompt: string) => {
     if (!englishPrompt.trim() || isTranslating) return;
 
+    // Check if Guest AI is timed out and no personal API key is configured
+    if (isGuestMode && isGuestTimedOut && !geminiService.hasKey()) {
+      setShowKeyModal(true);
+      setErrorMessage(
+        'Guest AI trial limit (5 minutes) reached to limit public server spend. Manual live-coding, audio playback, presets, and DSP effects remain 100% active! Enter your Gemini API key to continue AI prompting.'
+      );
+      return;
+    }
+
     setIsTranslating(true);
     setErrorMessage(null);
 
@@ -149,6 +191,8 @@ export const App: React.FC = () => {
     e.preventDefault();
     if (apiKeyInput.trim()) {
       geminiService.updateKey(apiKeyInput.trim());
+      setIsGuestMode(false);
+      setIsGuestTimedOut(false);
       setShowKeyModal(false);
       setErrorMessage(null);
     }
@@ -172,6 +216,33 @@ export const App: React.FC = () => {
             <span className="text-[9px] bg-purple-950/80 border border-purple-800 text-purple-300 px-1.5 py-0.2 rounded font-mono font-semibold hidden sm:inline">
               Live Coding
             </span>
+
+            {/* Guest Mode Status & 5-Minute Timer Badge */}
+            {isGuestMode && (
+              <div
+                onClick={() => setShowKeyModal(true)}
+                className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold border transition-all cursor-pointer ${
+                  isGuestTimedOut
+                    ? 'bg-amber-950/90 border-amber-600 text-amber-300'
+                    : guestSecondsRemaining < 60
+                    ? 'bg-rose-950/80 border-rose-500 text-rose-300 animate-pulse'
+                    : 'bg-indigo-950/80 border-indigo-700/80 text-indigo-300'
+                }`}
+                title={
+                  isGuestTimedOut
+                    ? 'Guest AI trial paused (5 min limit). Manual live-coding and audio playback are active. Click to enter your Gemini API key.'
+                    : `Guest AI trial: ${formatTimeRemaining(guestSecondsRemaining)} remaining`
+                }
+              >
+                <UserCheck size={11} className={isGuestTimedOut ? 'text-amber-400' : 'text-indigo-400'} />
+                <span className="font-bold">Guest AI</span>
+                <span className="opacity-60">|</span>
+                <Clock size={10} className={isGuestTimedOut ? 'text-amber-400' : 'text-indigo-300'} />
+                <span className="tabular-nums">
+                  {isGuestTimedOut ? 'Paused' : formatTimeRemaining(guestSecondsRemaining)}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -290,6 +361,27 @@ export const App: React.FC = () => {
         </div>
       </header>
 
+      {/* Guest Mode Expired Banner */}
+      {isGuestMode && isGuestTimedOut && (
+        <div className="bg-amber-950/90 border-b border-amber-800/80 px-4 py-2 text-xs text-amber-200 flex items-center justify-between shadow-md z-30">
+          <div className="flex items-center gap-2">
+            <ShieldAlert size={15} className="text-amber-400 flex-shrink-0" />
+            <span>
+              <strong>Guest AI Quota Paused (5-Minute Public Limit):</strong> AI prompt generation is paused to protect server spend. <strong>Manual live-coding, audio playback, sound packs, presets, and DSP effects remain 100% active and unlimited.</strong>
+            </span>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              onClick={() => setShowKeyModal(true)}
+              className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white font-mono text-[11px] font-bold rounded transition-all shadow-sm active:scale-95 flex items-center gap-1"
+            >
+              <Key size={11} />
+              <span>Enter API Key</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Error alert if any */}
       {errorMessage && (
         <div className="bg-red-950/80 border-b border-red-900/60 px-3 py-1 text-xs text-red-200 flex items-center justify-between">
@@ -340,6 +432,8 @@ export const App: React.FC = () => {
             onTranslate={handleTranslateEnglish}
             isTranslating={isTranslating}
             onOpenWorkshop={() => setShowWorkshopModal(true)}
+            isGuestAiTimedOut={isGuestMode && isGuestTimedOut && !geminiService.hasKey()}
+            onOpenKeyModal={() => setShowKeyModal(true)}
           />
         </div>
       </main>

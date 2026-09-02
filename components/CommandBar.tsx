@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, Send, Sparkles, Radio, AlertCircle } from 'lucide-react';
+import { Mic, Send, Sparkles, Radio, AlertCircle, Key, Lock } from 'lucide-react';
 
 interface CommandBarProps {
   onTranslate: (englishPrompt: string) => void;
   isTranslating: boolean;
   onOpenWorkshop?: () => void;
   className?: string;
+  isGuestAiTimedOut?: boolean;
+  onOpenKeyModal?: () => void;
 }
 
 export const CommandBar: React.FC<CommandBarProps> = ({
@@ -13,6 +15,8 @@ export const CommandBar: React.FC<CommandBarProps> = ({
   isTranslating,
   onOpenWorkshop,
   className = '',
+  isGuestAiTimedOut = false,
+  onOpenKeyModal,
 }) => {
   const [text, setText] = useState('');
   const [isListening, setIsListening] = useState(false);
@@ -196,6 +200,10 @@ export const CommandBar: React.FC<CommandBarProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isGuestAiTimedOut) {
+      if (onOpenKeyModal) onOpenKeyModal();
+      return;
+    }
     if (!text.trim() || isTranslating) return;
     const cmd = text.trim();
     handleDispatch(cmd);
@@ -210,17 +218,27 @@ export const CommandBar: React.FC<CommandBarProps> = ({
         {isSupported && (
           <button
             type="button"
-            onClick={toggleListening}
+            onClick={isGuestAiTimedOut ? onOpenKeyModal : toggleListening}
             disabled={isTranslating}
             className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-all active:scale-95 shadow-sm ${
               isListening
                 ? 'bg-red-600 text-white shadow-red-500/40 ring-1 ring-red-400 animate-pulse'
+                : isGuestAiTimedOut
+                ? 'bg-[#1e2337] hover:bg-amber-900/50 text-amber-400 border border-amber-800/40'
                 : 'bg-[#1e2337] hover:bg-purple-700 text-purple-300 hover:text-white border border-purple-800/40'
             }`}
-            title={isListening ? 'Listening live... Click to stop' : 'Click to Speak English Command'}
+            title={
+              isGuestAiTimedOut
+                ? 'Guest AI paused. Click to enter your API key.'
+                : isListening
+                ? 'Listening live... Click to stop'
+                : 'Click to Speak English Command'
+            }
           >
             {isListening ? (
               <Radio size={16} className="animate-spin" />
+            ) : isGuestAiTimedOut ? (
+              <Lock size={15} />
             ) : (
               <Mic size={16} />
             )}
@@ -235,37 +253,69 @@ export const CommandBar: React.FC<CommandBarProps> = ({
             onChange={(e) => setText(e.target.value)}
             disabled={isTranslating}
             placeholder={
-              isListening
+              isGuestAiTimedOut
+                ? 'Guest AI paused (5m limit). Enter your Gemini API key to unlock AI generation...'
+                : isListening
                 ? `Listening... ${transcript ? `"${transcript}"` : 'Say your command in English...'}`
                 : 'Type or speak in English (e.g. "mute 909 kick", "add 303 acid bass", "speed up to 135 bpm")...'
             }
             className={`w-full bg-[#0a0c14] border text-gray-100 placeholder-gray-500 text-xs rounded-lg px-3 py-1.5 focus:outline-none transition-all ${
               isListening
                 ? 'border-red-500/70 ring-1 ring-red-500/40'
+                : isGuestAiTimedOut
+                ? 'border-amber-900/60 focus:border-amber-500'
                 : 'border-[#2a3047] focus:border-purple-500 focus:ring-1 focus:ring-purple-500/40'
             }`}
           />
         </div>
 
         {/* Submit / Translate Button */}
-        <button
-          type="submit"
-          disabled={!text.trim() || isTranslating}
-          className="px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all shadow-sm active:scale-95 flex-shrink-0"
-        >
-          {isTranslating ? (
-            <>
-              <Sparkles size={12} className="animate-spin" />
-              <span>Translating...</span>
-            </>
-          ) : (
-            <>
-              <span>Translate</span>
-              <Send size={11} />
-            </>
-          )}
-        </button>
+        {isGuestAiTimedOut ? (
+          <button
+            type="button"
+            onClick={onOpenKeyModal}
+            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all shadow-sm active:scale-95 flex-shrink-0"
+            title="Unlock AI generation with your own API key"
+          >
+            <Key size={12} />
+            <span>Add Key</span>
+          </button>
+        ) : (
+          <button
+            type="submit"
+            disabled={!text.trim() || isTranslating}
+            className="px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all shadow-sm active:scale-95 flex-shrink-0"
+          >
+            {isTranslating ? (
+              <>
+                <Sparkles size={12} className="animate-spin" />
+                <span>Translating...</span>
+              </>
+            ) : (
+              <>
+                <span>Translate</span>
+                <Send size={11} />
+              </>
+            )}
+          </button>
+        )}
       </form>
+
+      {/* Guest Timeout Helper Banner */}
+      {isGuestAiTimedOut && (
+        <div className="mt-1.5 px-2 py-1 bg-amber-950/40 border border-amber-800/40 rounded text-[11px] text-amber-300 flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <Lock size={12} className="text-amber-400 flex-shrink-0" />
+            <span>Guest AI paused to protect public spend. <strong>Live coding & audio playback remain 100% active.</strong></span>
+          </div>
+          <button
+            onClick={onOpenKeyModal}
+            className="underline hover:text-amber-100 font-semibold ml-2 flex-shrink-0 text-[10px]"
+          >
+            Unlock with Key →
+          </button>
+        </div>
+      )}
 
       {/* Mic Audio Feedback / Error */}
       {audioError && (
